@@ -1,0 +1,17 @@
+# Python 缓存文件夹
+__pycache__/
+
+# Verilog 编译输出文件夹
+build/
+
+# 各种结果文件夹
+results/
+
+# 临时文件夹
+temp/
+
+# 可能存在的压缩包
+*.zip
+*.tar.gz
+*.7z
+*.rar
