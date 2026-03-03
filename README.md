@@ -44,6 +44,10 @@ CNN-Accelerator/
 │       ├── Test/               # 单样本各层金标准输出
 │       └── sigmoid_lookup_table.txt  # Sigmoid LUT（256 条目，FP32）
 │
+├── Notes/                      # 学习笔记
+│   ├── guide/                  # AI 给出的学习/涉及指导
+│   ├── slices/                 # 学习到的零散知识点 
+│
 ├── PyRTL-CNN/                  # ★ Python 行为级仿真模型（本团队编写）
 │   ├── load_params.py          # 参数加载模块
 │   ├── rtl_primitives.py       # 底层硬件原语（SRAM / LineBuffer / MAC / Requant）

@@ -15,3 +15,8 @@ temp/
 *.tar.gz
 *.7z
 *.rar
+
+# Claude Code 
+CLAUDE.md
+Prompt/
+chat-claude/
