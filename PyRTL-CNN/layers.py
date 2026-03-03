@@ -52,6 +52,7 @@ class ConvLayer:
     计算公式：
       O[i][j][k] = sum_{m=0}^{10} sum_{n=0}^{6} I[0][j+m][k+n] * W[i][0][m][n] + B[i]
       stride=1, padding=0：输出尺寸 = (30-11+1, 10-7+1) = (20, 4)
+      i ranging from 0 to 31 (32 output channels), m from 0 to 10, n from 0 to 6
 
     RTL 对应：
       - Conv_WeightSelector.v：从 Weight SRAM 按地址选择卷积核
@@ -89,8 +90,8 @@ class ConvLayer:
 
         # 行缓冲：缓存 KH=11 行，宽度 = IN_W=10
         self.line_buffer = LineBuffer(
-            num_rows=self.KH,
-            row_width=self.IN_W,
+            num_rows=self.KH,     # 行缓冲行数等于卷积核高度
+            row_width=self.IN_W,  # 行缓冲列数等于输入宽度
             name='conv_line_buffer'
         )
 
@@ -125,6 +126,7 @@ class ConvLayer:
 
     def _read_weight(self, out_ch, krow, kcol):
         """从 Weight SRAM 读取指定卷积核位置的权重，INT8。"""
+        # 地址展平公式：i * KH * KW + m * KW + n
         addr = out_ch * self.KH * self.KW + krow * self.KW + kcol
         return self.weight_sram.read(addr)
 
@@ -148,6 +150,7 @@ class ConvLayer:
             bias_val = self.bias_sram.read(i)  # INT16
 
             # 滑窗：对每个输出空间位置 (j, k)
+            # fj: 理解：在计算 Ouput Feature Map 的第 j 行时，需要缓存 Input Feature Map 的第 j 到 j+KH-1 行（共 KH 行）到 LineBuffer 中，以供卷积窗口使用。Output Feature Map的每一行只需进行一次行缓存
             for j in range(self.OUT_H):
                 # 将 LineBuffer 加载输入行片段 [j, j+KH) 的 [0, IN_W) 列
                 rows_for_lb = []
@@ -170,7 +173,7 @@ class ConvLayer:
                             pixel  = window[m][n]                   # INT8
                             weight = self._read_weight(i, m, n)     # INT8
                             self.mac.accumulate(pixel, weight)
-
+                    # fj: 思考，这一段纯串行的操作在真正 RTL 实现时应该如何做？
                     # 加偏置
                     self.mac.add_bias(bias_val)
 
