@@ -45,8 +45,9 @@ CNN-Accelerator/
 │       └── sigmoid_lookup_table.txt  # Sigmoid LUT（256 条目，FP32）
 │
 ├── Notes/                      # 学习笔记
+│   ├── demo                    # 示例 verilog 模块，与 slices/下的相关笔记一同阅读
 │   ├── guide/                  # AI 给出的学习/涉及指导
-│   ├── slices/                 # 学习到的零散知识点 
+│   └── slices/                 # 学习到的零散知识点 
 │
 ├── PyRTL-CNN/                  # ★ Python 行为级仿真模型（本团队编写）
 │   ├── load_params.py          # 参数加载模块

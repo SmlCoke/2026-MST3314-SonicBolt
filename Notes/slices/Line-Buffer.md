@@ -2,6 +2,10 @@
 
 > Assited by Claude Opus 4.6
 
+参考代码：
+移位寄存器，无循环缓冲：[方案A Verilog](../demo/lb_method_a_regarray.v)
+移位寄存器，有循环缓冲：[方案B Verilog](../demo/lb_method_b_ringbuffer.v)
+
 这里主要分析基于**移位寄存器和循环缓冲**实现的 Line Buffer 模块，我们以第一层标准卷积 11×7 为例
 ```verilog
 // 每次推入 1 行数据（从 SRAM 逐行读取），
