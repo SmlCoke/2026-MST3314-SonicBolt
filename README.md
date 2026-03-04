@@ -59,7 +59,7 @@ CNN-Accelerator/
 │   └── README.md               # 详细说明与学习指南
 │
 └── SonicBolt/                  # ★ RTL 实现（Verilog，待补充）
-    └── ...
+    └── test/                   # 测试模块，与真实 RTL 实现基本无关，用于测试
 ```
 
 ---
