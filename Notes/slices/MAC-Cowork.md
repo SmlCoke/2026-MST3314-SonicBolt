@@ -1,6 +1,7 @@
 # MAC Array（并行乘累加阵列）
 > Assited by Google AI Studio
 
+> 代码示例实现见：[MAC_Tree_77.v](../../SonciBolt/pre-test/MAC_Tree_77.v)
 
 太棒了！我们现在正式进入神经网络加速器的心脏地带——**并行计算单元（MAC Array / 并行乘累加阵列）**。
 
