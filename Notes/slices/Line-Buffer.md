@@ -1,6 +1,6 @@
 # Line Buffer
 
-(Assited by Claude Opus 4.6)
+> Assited by Claude Opus 4.6
 
 这里主要分析基于**移位寄存器和循环缓冲**实现的 Line Buffer 模块，我们以第一层标准卷积 11×7 为例
 ```verilog
