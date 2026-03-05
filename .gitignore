@@ -20,3 +20,13 @@ temp/
 CLAUDE.md
 Prompt/
 chat-claude/
+Ins.md
+
+# 参考样板
+MiniCNN/src
+SonicBolt/demo1
+
+# 仿真的结果文件
+simv
+*.vcd
+*.log
