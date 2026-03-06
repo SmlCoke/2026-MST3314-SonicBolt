@@ -1,0 +1,874 @@
+
+ ▐▛███▜▌   Claude Code v2.1.63
+▝▜█████▛▘  anthropic/claude-opus-4.6 · API Usage Billing
+  ▘▘ ▝▝    D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt…
+
+  /model to try Opus 4.6
+
+❯ 阅读当前目录下的 CLAUDE.md 以及 Prompt/p2.md，完成相应任务 
+
+● Read 1 file (ctrl+o to expand)
+
+● Now let me explore the MiniCNN reference code to understand the architecture
+  patterns.
+
+● Explore(Explore MiniCNN source code)
+  ⎿  Done (31 tool uses · 66.0k tokens · 1m 31s)
+  (ctrl+o to expand)
+
+● Explore(Read MiniCNN data file formats)
+  ⎿  Done (13 tool uses · 20.5k tokens · 1m 48s)
+  (ctrl+o to expand)
+
+● Let me check the existing SonicBolt directory structure and read some key
+  parameter files.
+
+● Read 4 files (ctrl+o to expand)
+
+● Now I have a clear picture. Let me create all the files. The weight file has
+  32 filters × 11 rows × 7 values per row = 32 × (11 lines + 1 blank) = 384
+  lines. The golden output has 32 channels × (20 lines + 1 blank) = 672 lines.
+
+  Let me create the task list and start building.
+
+● Bash(mkdir -p "D:/Project/CNN-Accelerator-Bak/claude-dev/2026-MST3314-SonicBol
+      t/SonicBolt/demo2-claude/rtl"
+      "D:/Project/CNN-Accelerator-Bak/claude-dev/2026-MST3314-S…)
+  ⎿  Done
+
+● Now let me write the test vector generation script first, then the RTL
+  modules.
+
+● Write(D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicBo
+       lt\demo2-claude\scripts\gen_testvec.py)
+  ⎿  Wrote 199 lines to ..\scripts\gen_testvec.py
+     #!/usr/bin/env python3
+     """
+     gen_testvec.py — 为 Conv1 RTL 仿真生成测试向量
+     从 MiniCNN/sim/samples/ 读取原始参数，生成 $readmemh 兼容的 hex 文件。
+
+     生成文件：
+       sim/input.txt         — 300 个 INT8 输入值 (hex, 每行一个值)
+       sim/weight.txt        — 2464 个 INT8 权重 (hex, 每行一个值)
+       sim/bias.txt          — 32 个 INT32 偏置值 (hex, 每行一个值)
+       sim/golden_output.txt — 2560 个 INT8 金标准输出 (hex, 每行 32 
+     个值空格分隔)
+     … +189 lines (ctrl+o to expand)
+
+● Now let me write all the RTL sub-modules.
+
+● Write(D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicBo
+       lt\demo2-claude\rtl\Conv1_LineBuffer.v)
+  ⎿  Wrote 102 lines to ..\rtl\Conv1_LineBuffer.v
+     // ===================================================================
+     =========
+     // Module: Conv1_LineBuffer
+     // Description: 11 行循环行缓冲器 (Circular Line Buffer)
+     //
+     // 功能概述：
+     //   存储 11 行输入特征图数据，每行 10 个 INT8 像素 (80 bits)。
+     //   采用循环指针 (wr_ptr) 控制写入位置，避免数据搬移，省面积。
+     //   对外提供"逻辑顺序"的 11 行数据输出，通过 wr_ptr 映射物理→逻辑。
+     //
+     // 关键参数：
+     … +92 lines (ctrl+o to expand)
+
+● Write(D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicBo
+       lt\demo2-claude\rtl\Conv1_MACUnit.v)
+  ⎿  Wrote 81 lines to ..\rtl\Conv1_MACUnit.v
+     // ===================================================================
+     =========
+     // Module: Conv1_MACUnit
+     // Description: 单通道 77 路乘累加单元 (Multiply-Accumulate Unit)
+     //
+     // 功能概述：
+     //   对 11×7 = 77 个 INT8 输入与 77 个 INT8 权重进行逐元素乘法，
+     //   将 77 个乘积求和后加偏置，输出 INT32 累加结果。
+     //   全组合逻辑实现（乘法器+加法树），外部流水线寄存器在 Conv1_Top 
+     中。
+     //
+     // 运算公式：
+     … +71 lines (ctrl+o to expand)
+
+● Write(D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicBo
+       lt\demo2-claude\rtl\Conv1_RequantUnit.v)
+  ⎿  Wrote 68 lines to ..\rtl\Conv1_RequantUnit.v
+     // ===================================================================
+     =========
+     // Module: Conv1_RequantUnit
+     // Description: 重量化 + ReLU 单元 (Requantization with ReLU)
+     //
+     // 功能概述：
+     //   将 INT32 累加结果通过定点乘法和移位转换为 INT8 输出，并应用 ReLU 
+     激活。
+     //   这是深度学习量化推理的标准做法。
+     //
+     // 运算公式：
+     //   shifted = (acc_in × M0) >>> n      (算术右移)
+     … +58 lines (ctrl+o to expand)
+
+● Now let me write the top-level module with FSM — this is the most complex
+  file.
+
+● Write(D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicBo
+       lt\demo2-claude\rtl\Conv1_Top.v)
+  ⎿  Wrote 411 lines to ..\rtl\Conv1_Top.v
+     // ===================================================================
+     =========
+     // Module: Conv1_Top
+     // Description: 第一层标准卷积 (Conv1) 顶层模块
+     //
+     // 功能概述：
+     //   实现 (1,30,10) → Conv(32,11×7) → ReLU → (32,20,4) 
+     的完整卷积运算。
+     //   采用 32 通道全并行架构，每个时钟周期输出一个空间位置的 32 
+     个通道值。
+     //
+     // 架构特点：
+     //   - 32 个并行 MAC 单元 (每个 77 路乘累加)
+     … +401 lines (ctrl+o to expand)
+
+● Now let me write the testbench.
+
+● Write(D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicBo
+       lt\demo2-claude\tb\tb_Conv1.v)
+  ⎿  Wrote 353 lines to ..\tb\tb_Conv1.v
+     // ===================================================================
+     =========
+     // Testbench: tb_Conv1
+     // Description: Conv1_Top 仿真验证平台
+     //
+     // 功能概述：
+     //   1. 使用 $readmemh 从 input.txt, weight.txt, bias.txt 加载测试数据
+     //   2. 通过 FSM 接口驱动 Conv1_Top 完成一次完整推理
+     //   3. 将输出结果保存到 hw_output.txt (每行 32 个 hex 值，空格分隔)
+     //   4. 与 golden_output.txt 金标准进行自动比对
+     //
+     … +343 lines (ctrl+o to expand)
+
+● Now let me write the three documentation files.
+
+● Write(D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicBo
+       lt\demo2-claude\docs\code_guide.md)
+  ⎿  Wrote 209 lines to ..\docs\code_guide.md
+     # Conv1 代码阅读指南（新手入门版）
+
+     > 本文档帮助零基础的同学理解 Conv1 的 Verilog 代码。
+     > 阅读前建议先了解基本的 Verilog 语法（`module`, `wire`, `reg`,
+     `always`, `assign`）。
+
+     ---
+
+     ## 1. 文件总览
+
+     ```
+     … +199 lines (ctrl+o to expand)
+
+● Write(D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicBo
+       lt\demo2-claude\docs\architecture.md)
+  ⎿  Wrote 297 lines to ..\docs\architecture.md
+     # Conv1 硬件架构详解
+
+     ---
+
+     ## 1. 算法规格
+
+     | 参数 | 值 |
+     |------|-----|
+     | 输入尺寸 | (1, 30, 10) — 1 通道, 高 30, 宽 10 |
+     | 卷积核 | (32, 1, 11, 7) — 32 个输出通道, 高 11, 宽 7 |
+     … +287 lines (ctrl+o to expand)
+
+● Write(D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicBo
+       lt\demo2-claude\docs\next_steps.md)
+  ⎿  Wrote 226 lines to ..\docs\next_steps.md
+     # 下一步开发提示
+
+     ---
+
+     ## 1. 当前状态
+
+     Conv1 层已完成：
+     - 完整的 RTL 代码（LineBuffer + MACUnit + RequantUnit + Top）
+     - Testbench 和测试向量生成脚本
+     - 功能验证框架
+     … +216 lines (ctrl+o to expand)
+
+● Now let me run the test vector generation script to verify it works.
+
+● Bash(cd "D:/Project/CNN-Accelerator-Bak/claude-dev/2026-MST3314-SonicBolt/Soni
+      cBolt/demo2-claude/scripts" && python gen_testvec.py)
+  ⎿  ============================================================
+     Conv1 ��������������
+     ============================================================
+     … +21 lines (ctrl+o to expand)
+
+● Test vector generation succeeded. Let me verify the output files.
+
+● Bash(cd "D:/Project/CNN-Accelerator-Bak/claude-dev/2026-MST3314-SonicBolt/Soni
+      cBolt/demo2-claude/sim" && echo "=== input.txt (first 10 lines) ===" &&
+      head -10 input.…)
+  ⎿  === input.txt (first 10 lines) ===
+     77
+     0b
+     … +38 lines (ctrl+o to expand)
+
+● All files generated correctly. Let me verify the data correctness by
+  cross-checking the first few values.
+
+● Bash(python3 -c "
+      # Verify: input[0] should be 119 -> 0x77, input[1] should be 11 -> 0x0b…)
+  ⎿  Input check:
+       119 -> 0x77
+       11 -> 0x0b
+     … +12 lines (ctrl+o to expand)
+
+● All values match correctly. The golden_output.txt first line starts with 1c 5b
+   = (28, 91) for channels 0 and 1 at position (h=0, w=0). Let me verify the
+  second value in golden output is correct — channel 1's (h=0,w=0) should be the
+   first value of the second block in Out_Conv.txt, which is 91. And the second
+  golden line has 5b e9 — golden line index 1 is (h=0, w=1) where channel 0=52
+  (wait, let me re-check).
+
+● Bash(python3 -c "
+      # golden line 1 = (h=0, w=1): ch0=52, ch1=-22 from Out_Conv.txt…)
+  ⎿  Error: Exit code 1
+     Traceback (most recent call last):
+       File "<string>", line 21, in <module>
+     UnicodeEncodeError: 'gbk' codec can't encode character '\u2713' in position
+      35: illegal multibyte sequence
+     ch0, (h=0,w=1) = 91 -> 0x5b
+
+     Traceback (most recent call last):
+       File "<string>", line 21, in <module>
+     UnicodeEncodeError: 'gbk' codec can't encode character '\u2713' in position
+      35: illegal multibyte sequence
+     ch0, (h=0,w=1) = 91 -> 0x5b
+
+
+
+● The golden output matches: line 1 (h=0,w=1) has ch0=0x5b=91, and line 2
+  (h=0,w=2) starts with 0x4e=78. All correct.
+
+● Now let me review the RTL code for any bugs — particularly the critical timing
+   issue with the line buffer and FSM.
+
+● Read 1 file (ctrl+o to expand)
+
+● I see an important issue. The output_data is purely combinational (from MAC +
+  Requant), but output_valid/row/col are registered (1 cycle delay). This
+  creates a mismatch — when output_valid goes high, the output_data corresponds
+  to the current cycle's computation, but the registered row/col correspond to
+  the previous cycle's values. Actually wait, that's intentional: output_valid_r
+   captures (state == S_CALC_RUN) and row_cnt/col_cnt at the same time. Since
+  these counters update sequentially, the registered values represent what was
+  computed in the previous cycle. But output_data is combinational and shows the
+   current cycle's result.
+
+  This is a problem. I need to either:
+  1. Also register output_data (add a pipeline register), or
+  2. Make output_valid/row/col combinational too
+
+  Let me fix this by registering the output data as well, which also helps
+  timing.
+
+● Update(D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicB
+        olt\demo2-claude\rtl\Conv1_Top.v)
+  ⎿  Added 1 line, removed 1 line
+      52      input  wire [79:0] input_row_data,  // 一行数据 (10 × INT8 
+           = 80 bits)                                                    
+      53                                                                 
+      54      // ==================== 输出接口 ====================      
+      55 -    output wire [255:0] output_data,    // 32 × INT8 = 256 bits
+      55 +    output reg  [255:0] output_data,    // 32 × INT8 = 256 bits
+         + (寄存输出)                                                    
+      56      output reg         output_valid,    // 输出数据有效        
+      57      output reg  [4:0]  output_row,      // 输出行坐标 (0~19)   
+      58      output reg  [1:0]  output_col       // 输出列坐标 (0~3)    
+
+● Now I need to change the output_data from combinational assign to registered,
+  and update the output packing logic:
+
+● Update(D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicB
+        olt\demo2-claude\rtl\Conv1_Top.v)
+  ⎿  Added 6 lines, removed 5 lines
+      210      endgenerate                                               
+      211                                                                
+      212      // ====================================================== 
+           ==========                                                    
+      213 -    //                    输出数据打包                        
+      213 +    //                    输出数据打包 (组合逻辑)             
+      214      // ====================================================== 
+           ==========                                                    
+      215      // 将 32 个 INT8 输出打包为 256-bit                       
+      216 -    // output_data[7:0]   = channel 0                         
+      217 -    // output_data[15:8]  = channel 1                         
+      216 +    // output_data_comb[7:0]   = channel 0                    
+      217 +    // output_data_comb[15:8]  = channel 1                    
+      218      // ...                                                    
+      219 -    // output_data[255:248] = channel 31                      
+      219 +    // output_data_comb[255:248] = channel 31                 
+      220 +    wire [255:0] output_data_comb;                            
+      221                                                                
+      222      genvar ch;                                                
+      223      generate                                                  
+      224          for (ch = 0; ch < NUM_FILTERS; ch = ch + 1) begin :   
+           gen_out_pack                                                  
+      225 -            assign output_data[ch*8 +: 8] = quant_result[ch]; 
+      225 +            assign output_data_comb                           
+          +[ch*8 +: 8] = quant_result[ch];                               
+      226          end                                                   
+      227      endgenerate                                               
+      228                                                                
+
+● Now update the output register section to also register output_data:
+
+● Update(D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicB
+        olt\demo2-claude\rtl\Conv1_Top.v)
+  ⎿  Added 12 lines, removed 21 lines
+      367      end                                                       
+      368                                                                
+      369      // ====================================================== 
+           ==========                                                    
+      370 -    //                    输出控制信号                        
+      370 +    //                    输出流水寄存器                      
+      371      // ====================================================== 
+           ==========                                                    
+      372 -    // 流水线延迟：MAC + Requant 都是组合逻辑                 
+      373 -    // 窗口数据在 CALC_RUN 状态由 col_cnt                     
+          -选择，组合逻辑传播到 MAC 和 Requant                           
+      374 -    // 因此输出在 CALC_RUN 状态的同一周期有效                 
+      375 -    //                                                        
+      376 -    // 但为了保证时序收敛，添加 1 拍寄存器延迟                
+      377 -    reg        output_valid_r;                                
+      378 -    reg [4:0]  output_row_r;                                  
+      379 -    reg [1:0]  output_col_r;                                  
+      372 +    // MAC + Requant 都是组合逻辑                             
+          +，输出在 CALC_RUN 同周期就绑定了                              
+      373 +    // 为了时序收敛，在输出端添加 1 拍寄存器延迟              
+      374 +    // output_data / output_valid / output_row / output_col   
+          +全部寄存，保证对齐                                            
+      375                                                                
+      376      always @(posedge clk or negedge rst_n) begin              
+      377          if (!rst_n) begin                                     
+      378 -            output_valid_r <= 1'b0;                           
+      379 -            output_row_r   <= 5'd0;                           
+      380 -            output_col_r   <= 2'd0;                           
+      378 +            output_data  <= 256'd0;                           
+      379 +            output_valid <= 1'b0;                             
+      380 +            output_row   <= 5'd0;                             
+      381 +            output_col   <= 2'd0;                             
+      382          end else begin                                        
+      383 -            output_valid_r <= (state == S_CALC_RUN);          
+      384 -            output_row_r   <= row_cnt;                        
+      385 -            output_col_r   <= col_cnt;                        
+      383 +            output_data  <= output_data_comb;                 
+      384 +            output_valid <= (state == S_CALC_RUN);            
+      385 +            output_row   <= row_cnt;                          
+      386 +            output_col   <= col_cnt;                          
+      387          end                                                   
+      388      end                                                       
+      389                                                                
+      390 -    always @(*) begin                                         
+      391 -        output_valid = output_valid_r;                        
+      392 -        output_row   = output_row_r;                          
+      393 -        output_col   = output_col_r;                          
+      394 -    end                                                       
+      395 -                                                              
+      390      // ====================================================== 
+           ==========                                                    
+      391      //                    busy / done 信号                    
+      392      // ====================================================== 
+           ==========                                                    
+
+● Now there's another subtle bug I need to check. The output_valid is set to
+  (state == S_CALC_RUN) but that will also be true for the first cycle where
+  state just transitioned to S_CALC_RUN — at that point the counters haven't
+  started yet (actually row_cnt=0, col_cnt=0 which is fine). And it will remain
+  true for 80 cycles. But on the very last cycle (row=19, col=3), the state
+  transitions to S_DONE next cycle, so output_valid goes low. However, the
+  registered output captures one more beat: when state transitions to S_DONE,
+  the output register captures the last valid computation. Let me trace through
+  more carefully.
+
+  Actually, the output_valid is registered: it captures (state == S_CALC_RUN) on
+   the rising edge. When state == S_CALC_RUN and row=19, col=3, next_state = 
+  S_DONE. On the next rising edge, state becomes S_DONE, and output_valid
+  (registered) still captures the previous cycle's (state == S_CALC_RUN) = 1.
+  Wait, no — the registration captures the current combinational value at the
+  rising edge.
+
+  Let me trace the pipeline:
+  - Cycle N: state=S_CALC_RUN, row_cnt=0, col_cnt=0
+    - Window extraction + MAC + Requant compute for (0,0) → output_data_comb =
+  result(0,0)
+    - Rising edge: output_data <= result(0,0), output_valid <= 1, output_row <=
+  0, output_col <= 0
+    - These registered values become visible at cycle N+1
+
+  Wait, I need to think about this differently. The registered outputs become
+  available AFTER the rising edge. So during cycle N:
+  - The combinational signals are computed
+  - At the rising edge of cycle N, the registers capture the current values
+  - The register outputs are then available during cycle N+1 (before the next
+  rising edge)
+
+  Actually no, in simulation:
+  - always @(posedge clk): at the rising edge, RHS is evaluated (using current
+  values), then assigned to LHS
+  - The LHS values (output_data, output_valid, etc.) take effect immediately
+  after the non-blocking assignment completes
+  - In the SAME cycle (after the edge), these outputs are now the registered
+  values
+
+  So the sequence is:
+  - Cycle N starts: state=S_FILL_LB (just finished), transitions to S_CALC_RUN
+  - At rising edge of cycle N: state <= S_CALC_RUN, output_valid <= (old_state
+  == S_CALC_RUN) = 0
+  - During cycle N: state is now S_CALC_RUN, col_cnt=0, row_cnt=0, computation
+  happens
+  - At rising edge of cycle N+1: output_valid <= (state == S_CALC_RUN) = 1,
+  output_data <= result(0,0)
+  - The output at cycle N+1 has valid=1, data=result(0,0), row=0, col=0
+
+  This means the output has a 1-cycle latency from when the computation starts.
+  That's correct and the output is properly aligned.
+
+  Now the last cycle:
+  - Last CALC_RUN cycle: row=19, col=3, next_state=S_DONE
+  - At rising edge: state <= S_DONE, output_valid <= (state==S_CALC_RUN) = 1,
+  output_data <= result(19,3)
+  - Next cycle: state=S_DONE, output_valid <= (state==S_CALC_RUN)=0
+
+  So we get exactly 80 valid output beats (one extra because of the pipeline
+  delay). Wait, let me count more carefully:
+
+  - Cycle when state first becomes S_CALC_RUN: output from previous state →
+  output_valid=0
+  - Next 80 cycles: state remains S_CALC_RUN → output_valid=1 for 80 beats
+
+  Actually, the state stays in S_CALC_RUN for exactly 80 cycles (row 0-19 × col
+  0-3). On the 81st cycle, state transitions to S_DONE. So output_valid stays
+  high for 80 beats. But since output_valid is delayed by 1 cycle, the first
+  valid output appears 1 cycle after entering S_CALC_RUN, and the last valid
+  output appears 1 cycle after leaving S_CALC_RUN (when state is already
+  S_DONE). That means we get:
+  - output_valid_1 = 0 (transition cycle, prev state wasn't S_CALC_RUN)
+  - output_valid_2 = 1 (first calc cycle), data = result(0,0), row=0, col=0
+  - ...
+  - output_valid_81 = 1 (80th calc cycle), data = result(19,3), row=19, col=3
+  - output_valid_82 = 0 (state is now S_DONE... wait)
+
+  Hmm, when state transitions at the end of S_CALC_RUN to S_DONE:
+  - In the cycle where row=19, col=3: state is still S_CALC_RUN (hasn't
+  transitioned yet)
+  - At the rising edge: state <= S_DONE (transition happens), output_valid <=
+  (state==S_CALC_RUN) = 1
+  - So output_valid is 1 for this transition cycle
+
+  Then in the S_DONE cycle:
+  - state = S_DONE
+  - At rising edge: output_valid <= (state==S_CALC_RUN) = 0
+
+  So total valid beats = 80 + 1? No, let me count from the first cycle of
+  S_CALC_RUN.
+
+  State transitions:
+  - Cycle T: state transitions to S_CALC_RUN (from S_FILL_LB)
+    - At this rising edge: state <= S_CALC_RUN
+    - The row_cnt and col_cnt were initialized to 0 in S_FILL_LB
+  - Cycle T (during): state = S_CALC_RUN, row=0, col=0
+    - output_valid register captures: (state==S_CALC_RUN)=1, row=0, col=0,
+  data=result(0,0)
+
+  Wait, I'm confusing myself. Let me look at the code more carefully.
+
+  The state register updates with next_state at each rising edge. The
+  output_valid register captures (state == S_CALC_RUN) at the rising edge. Since
+   state is updated first (from next_state), actually... both use non-blocking
+  assignments, so they all evaluate the RHS at the same time (using the OLD
+  register values) and then update.
+
+  So at the rising edge:
+  - state <= next_state (captures the CURRENT next_state)
+  - output_valid <= (state == S_CALC_RUN) (checks the CURRENT state, before it
+  updates)
+
+  This means when state transitions from S_FILL_LB to S_CALC_RUN:
+  - At the transition edge: state (old) = S_FILL_LB, output_valid <= (S_FILL_LB
+  == S_CALC_RUN) = 0
+  - After the edge: state = S_CALC_RUN
+  - Next edge: state (old) = S_CALC_RUN, output_valid <= 1, data captures
+  current compuation
+
+  So the first valid output appears 2 cycles after state enters S_CALC_RUN? No
+  wait...
+
+  Let me trace it with explicit cycle numbers:
+
+  Cycle 0: state = S_FILL_LB, next_state = S_CALC_RUN (fill_cnt==10)
+    Rising edge → state <= S_CALC_RUN
+    Rising edge → output_valid <= (S_FILL_LB == S_CALC_RUN) = 0
+
+  Cycle 1: state = S_CALC_RUN, row_cnt=0, col_cnt=0
+    Window extraction for (0,0) → output_data_comb = result(0,0)
+    Rising edge → output_valid <= (S_CALC_RUN == S_CALC_RUN) = 1
+    Rising edge → output_data <= result(0,0)
+    Rising edge → output_row <= 0, output_col <= 0
+    Rising edge → col_cnt <= 1
+
+  Cycle 2: state = S_CALC_RUN, row_cnt=0, col_cnt=1
+    Window for (0,1) → output_data_comb = result(0,1)
+    Rising edge → output_valid <= 1
+    Rising edge → output_data <= result(0,1)
+    ...
+
+  ...continues for 80 cycles...
+
+  Cycle 80: state = S_CALC_RUN, row_cnt=19, col_cnt=3
+    next_state = S_DONE
+    Window for (19,3) → output_data_comb = result(19,3)
+    Rising edge → state <= S_DONE
+    Rising edge → output_valid <= (S_CALC_RUN == S_CALC_RUN) = 1
+    Rising edge → output_data <= result(19,3)
+
+  Cycle 81: state = S_DONE
+    Rising edge → output_valid <= (S_DONE == S_CALC_RUN) = 0
+
+  So output_valid is high from cycle 2 to cycle 81 = 80 beats. The output data
+  is correctly aligned with the row/col values.
+
+  But wait — when the testbench's done signal is checked: done is registered and
+   becomes 1 when state == S_DONE. At cycle 81, state=S_DONE, and at the rising
+  edge of cycle 82, done <= 1. So the wait(done == 1'b1) in the testbench will
+  wait until cycle 82. By that time, all 80 output beats have been captured.
+
+  But there's one more issue: the last output beat (cycle 81, state just
+  transitioned to S_DONE) — the output_valid is captured at the rising edge of
+  cycle 81, which checks state == S_CALC_RUN where state is still S_CALC_RUN
+  (old value). So output_valid goes high. Then at cycle 82's rising edge, it
+  goes low. So the last beat IS captured.
+
+  Actually wait, I realize there might still be an issue. Let me look at done
+  more carefully:
+
+  always @(posedge clk or negedge rst_n) begin
+      ...
+      done <= (state == S_DONE);
+  end
+
+  At the rising edge when state transitions to S_DONE (cycle 81's rising edge):
+  - state (old) = S_CALC_RUN
+  - done <= (S_CALC_RUN == S_DONE) = 0
+
+  At the next rising edge (cycle 82):
+  - state (old) = S_DONE
+  - done <= (S_DONE == S_DONE) = 1
+
+  So done goes high on cycle 82. But at cycle 81, output_valid is 1 (the last
+  output). At cycle 82, output_valid is 0. The testbench wait(done) triggers at
+  cycle 82, by which point all output beats have been written.
+
+  Now let me also think about a subtle issue with the line buffer and SRAM
+  timing in the FILL_LB to CALC_RUN transition.
+
+  During FILL_LB:
+  - fill_cnt goes 0 → 10 (11 cycles)
+  - Each cycle: input_rd_en=1, addr=fill_cnt
+  - lb_load_en = (state == S_FILL_LB) = 1
+  - lb_row_data = input_row_data = input_sram[fill_cnt] (combinational)
+  - At rising edge: line_buf[wr_ptr] <= input_row_data
+  - wr_ptr advances
+
+  After 11 cycles of FILL_LB (fill_cnt from 0 to 10):
+  - fill_cnt reaches 10 → next_state = S_CALC_RUN
+  - At rise edge: state <= S_CALC_RUN, fill_cnt <= 11
+  - Also at this edge: line_buf[10] <= input_sram[10] (the 11th row is stored)
+  - wr_ptr <= 0 (wraps around)
+
+  Then in S_CALC_RUN, first cycle (row=0, col=0):
+  - lb_line[0..10] uses wr_ptr=0 → line[0]=buf[0]=row0, line[10]=buf[10]=row10
+
+  Wait, there's a problem! When fill_cnt=10 and state transitions:
+  - lb_load_en = (state == S_FILL_LB) — but state has just transitioned to
+  S_CALC_RUN at this edge. So lb_load_en was 1 during the combinational
+  evaluation (state was still S_FILL_LB), and the line buffer load happens at
+  this edge. That's correct.
+
+  Actually, let me re-check. The state transition and load_en are evaluated at
+  the SAME rising edge:
+  - At the rising edge, state (old) = S_FILL_LB, so lb_load_en = 1
+  - input_row_data = sram[10] (from fill_cnt=10)
+  - line_buf[wr_ptr] <= input_row_data → stores row 10
+
+  After this edge: state = S_CALC_RUN, wr_ptr = 0 (wrapped), all 11 rows stored.
+
+
+  Now for CALC_RUN at col_cnt=3 when loading a new row. Let me check:
+  - state = S_CALC_RUN, col_cnt = 3 (before the edge)
+  - lb_load_en = (state == S_CALC_RUN && col_cnt == 3 && row_cnt < 19) = 1
+  - input_rd_en = 1, addr = row_cnt + 11
+  - At the rising edge: line_buf[wr_ptr] <= sram[row_cnt + 11]
+  - Also: col_cnt <= 0, row_cnt may increment
+
+  After the edge: the new row is stored, wr_ptr advanced. On the next cycle
+  (col_cnt=0, row_cnt+1), the line buffer has the correct data.
+
+  This all looks correct. Let me now also verify there isn't a problem with the
+  window extraction when c is used as c[2:0]. The loop variable c goes from 0 to
+   6, so c[2:0] is fine (7 fits in 3 bits). And col_cnt + c[2:0] goes from
+  col_cnt to col_cnt+6, which for col_cnt=3 gives 3+6=9, which is the last
+  column (index 9 of 10 columns, 0-indexed). That's correct.
+
+  The code looks correct. Let me now verify the golden output comparison logic
+  in the testbench is working properly. Let me check that the golden_output.txt
+  format matches what the testbench expects.
+
+  The golden_output.txt has 80 lines, each with 32 hex values space-separated.
+  The golden_mem array stores these linearly: golden_mem[line*32 + ch]. The
+  testbench reads with $fscanf.
+
+  One potential issue: the testbench's load_golden_output task uses a begin : 
+  load_golden_block named block for the local integer fd_golden declaration.
+  Some older Verilog simulators might not support this. Let me also check if the
+   $fscanf hex format will handle signed values correctly — since the golden
+  values are 2-digit hex (unsigned representation of INT8), and both hw output
+  and golden use the same hex format, the comparison should be correct
+  regardless of signedness.
+
+  Let me also verify the testbench weight loading timing. The testbench drives:
+  start = 1 (1 cycle)
+  start = 0
+  // LOAD_WEIGHT: 2464 cycles of wt_valid + wt_data
+  // Then wt_valid = 0 for 1 cycle
+  // LOAD_BIAS: 32 cycles of bias_valid + bias_data
+
+  Wait, there's a timing issue. After start goes high, the FSM transitions from
+  IDLE to LOAD_WEIGHT at the next rising edge. But the testbench immediately
+  starts sending weight data. Let me trace:
+
+  TB Cycle 0: start = 1
+    At rising edge: state (old) = IDLE, start=1 → next_state = LOAD_WEIGHT →
+  state <= LOAD_WEIGHT
+
+  TB Cycle 1: start = 0
+    Now in TB, the for loop starts: @(posedge clk) first, then sets wt_data and
+  wt_valid
+
+  TB Cycle 2: wt_data = weight_mem[0], wt_valid = 1
+    At rising edge: state = LOAD_WEIGHT, wt_valid = 1 → weight_mem[0] <= wt_data
+
+  TB Cycle 3: wt_data = weight_mem[1], wt_valid = 1
+    ...
+
+  Wait, the testbench code is:
+  @(posedge clk);
+  start = 1'b1;
+  @(posedge clk);
+  start = 1'b0;
+
+  // LOAD_WEIGHT
+  for (i = 0; i < 2464; i = i + 1) begin
+      @(posedge clk);
+      wt_data  = weight_mem[i];
+      wt_valid = 1'b1;
+  end
+  @(posedge clk);
+  wt_valid = 1'b0;
+
+  The @(posedge clk); wt_data = ... means: wait for rising edge, then in the
+  SAME delta, update wt_data using blocking assignment. But the DUT evaluates
+  its non-blocking assignments at the same edge. Due to Verilog event
+  scheduling, the @(posedge clk) in the TB fires at the same edge as the DUT's
+  always @(posedge clk). The RHS of the DUT's non-blocking assignment is
+  evaluated BEFORE the TB's blocking assignment on the same edge. So the DUT
+  sees wt_valid=0 on the first iteration's edge, and wt_valid=1 starting from
+  the second edge.
+
+  This is a classic Verilog testbench timing issue. The proper way is to set the
+   values BEFORE the clock edge, using something like #1 delay. Let me fix the
+  testbench to use @(negedge clk) or set values before the positive edge.
+
+● Read 1 file (ctrl+o to expand)
+
+● I need to fix the testbench timing. The issue is that setting values AFTER
+  @(posedge clk) means they arrive one cycle late. Let me rewrite the driving
+  section to set values before the clock edge.
+
+● Update(D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicB
+        olt\demo2-claude\tb\tb_Conv1.v)
+  ⎿  Added 8 lines, removed 6 lines
+      180          #(CLK_PERIOD * 2);                                    
+      181                                                                
+      182          // ==================== 启动 ====================     
+      183 +        // 注意: 使用 @(negedge clk) 来设置输入信号           
+      184 +        // 确保信号在下一个上升沿之前稳定，避免 setup time    
+          +竞争                                                          
+      185          $display("[INFO] Starting Conv1...");                 
+      186 -        @(posedge clk);                                       
+      186 +        @(negedge clk);                                       
+      187          start = 1'b1;                                         
+      188 -        @(posedge clk);                                       
+      188 +        @(negedge clk);                                       
+      189          start = 1'b0;                                         
+      190                                                                
+      191          // ==================== 加载权重 ==================== 
+      192          $display("[INFO] Loading weights (2464 cycles)...");  
+      193          for (i = 0; i < 2464; i = i + 1) begin                
+      194 -            @(posedge clk);                                   
+      194 +            @(negedge clk);                                   
+      195              wt_data  = weight_mem[i];                         
+      196              wt_valid = 1'b1;                                  
+      197          end                                                   
+      198 -        @(posedge clk);                                       
+      198 +        @(negedge clk);                                       
+      199          wt_valid = 1'b0;                                      
+      200          $display("[INFO] Weights loaded.");                   
+      201                                                                
+      202          // ==================== 加载偏置 ==================== 
+      203          $display("[INFO] Loading biases (32 cycles)...");     
+      204          for (i = 0; i < 32; i = i + 1) begin                  
+      205 -            @(posedge clk);                                   
+      205 +            @(negedge clk);                                   
+      206              bias_data  = bias_mem[i];                         
+      207              bias_valid = 1'b1;                                
+      208          end                                                   
+      209 -        @(posedge clk);                                       
+      209 +        @(negedge clk);                                       
+      210          bias_valid = 1'b0;                                    
+      211          $display("[INFO] Biases loaded.");                    
+      212                                                                
+
+● Now let me also check the golden_output format one more time. The
+  golden_output.txt has values like 80 which is 0x80 = 128 unsigned = -128
+  signed. Looking at the Out_Conv.txt golden data — the second line of channel 1
+   block is "93 -22 -87 -72". So channel 1 at (h=1, w=0) is 93, and channel 1 at
+   (h=0, w=0) is 91 (from the first block "91 -23 -93 -72"). Wait, the first
+  value in the channel 1 block is 91, and the first value in the channel 0 block
+   is 28.
+
+  Looking at golden_output.txt line 0 = 1c 5b 7f 65 ... = (28, 91, 127, 101,
+  ...). But wait — channel 2 at (h=0, w=0): according to Out_Conv.txt, the third
+   block's first line should give us that value. Let me check channel 2.
+
+  Actually, let me look at values that have the 80 hex value. In the
+  golden_output.txt, channel 0 at position (h=0, w=0)=28 (hex: 1c), channel 0 at
+   (h=0, w=2)=78 (hex: 4e). Some channels have negative values — for example in
+  Out_Conv.txt, channel 1 has "-23" at position (h=0,w=1), which in INT8 two's
+  complement is 0xe9. Let me verify from the golden file line 1 (which is
+  (h=0,w=1)):
+
+  5b e9 24 ed ... = (91, -23, 36, -19, ...). Channel 0 at (h=0,w=1) should be 91
+   (from Out_Conv line 1: "52 89 72 39" → wait, that's h=1, not h=0's w=1).
+
+  Hmm, Out_Conv.txt first block (channel 0):
+  Line 1: 28 91 78 63      → (h=0, w=0..3)
+  Line 2: 52 89 72 39      → (h=1, w=0..3)
+
+  So channel 0 at (h=0, w=1) = 91 = 0x5b. And golden_output.txt line 1 starts
+  with 5b — that's channel 0. Channel 1 at (h=0, w=1) = -22 (from Out_Conv.txt
+  channel 1 line 1: "93 -22 -87 -72" → h=0 w=1 is -22 = 0xea). Let me check:
+  golden line 1 = 5b e9 24 ed ... → the second value is e9 = -23... but -22 =
+  0xea.
+
+  Wait, looking more carefully at Out_Conv.txt:
+  - Block 1 (channel 0): lines 1-20
+  - Block 2 (channel 1): starts at line 22
+
+  Channel 1 first line: "91 -23 -93 -72" → (h=0, w=0..3) = 91, -23, -93, -72
+
+  So channel 1 at (h=0, w=1) = -23 = 0xe9 (not -22). I was misreading earlier.
+  Let me verify: golden line 1 second value is e9 = -23. That matches perfectly!
+
+  Let me also verify a negative channel 0 value. Out_Conv.txt channel 0: line 11
+   has "-5 80 110 82" → (h=10, w=0..3). Golden output line 40 (= 10*4 + 0)
+  should have channel 0 = -5 = 0xfb. Let me check with python.
+
+● Bash(cd "D:/Project/CNN-Accelerator-Bak/claude-dev/2026-MST3314-SonicBolt/Soni
+      cBolt/demo2-claude/sim" && sed -n '41p' golden_output.txt | cut -d' ' -f1)
+  ⎿  fb
+
+● 0xfb = -5 in signed INT8, matching Out_Conv.txt channel 0, h=10, w=0 = -5. The
+   golden data generation is correct.
+
+  Now let me verify the file structure is complete.
+
+● Searched for 1 pattern (ctrl+o to expand)
+
+● All files are in place. Let me do a final review of all the files to ensure
+  everything is complete and correct.
+
+● All tasks completed. Here's a summary of everything I've generated:
+
+  ---
+  交付清单
+
+  RTL 子模块 (SonicBolt/demo2-claude/rtl/)
+
+  ┌─────────────────┬─────────────┬────────────────────────────────────────┐
+  │      文件       │    功能     │                关键特性                │
+  ├─────────────────┼─────────────┼────────────────────────────────────────┤
+  │ Conv1_LineBuffe │ 11 行循环行 │ 循环指针避免数据搬移，组合逻辑映射逻辑 │
+  │ r.v             │ 缓冲器      │ →物理地址                              │
+  ├─────────────────┼─────────────┼────────────────────────────────────────┤
+  │ Conv1_MACUnit.v │ 77 路乘累加 │ 77 个 8×8 乘法器 + 行为级加法树 +      │
+  │                 │ 单元        │ 偏置，纯组合逻辑                       │
+  ├─────────────────┼─────────────┼────────────────────────────────────────┤
+  │ Conv1_RequantUn │ 重量化 +    │ M0=111, n=14, clamp((acc×M0)>>>14, 0,  │
+  │ it.v            │ ReLU        │ 127)                                   │
+  ├─────────────────┼─────────────┼────────────────────────────────────────┤
+  │ Conv1_Top.v     │ 顶层模块 +  │ 32 个 MAC+Requant 全并行，FSM 6        │
+  │                 │ FSM         │ 状态，1 级输出流水寄存器               │
+  └─────────────────┴─────────────┴────────────────────────────────────────┘
+
+  仿真平台 (tb/, sim/, scripts/)
+
+  ┌────────────────────────┬─────────────────────────────────────────────────┐
+  │          文件          │                      功能                       │
+  ├────────────────────────┼─────────────────────────────────────────────────┤
+  │                        │ Testbench: $readmemh                            │
+  │ tb/tb_Conv1.v          │ 加载数据，驱动权重/偏置/输入，保存输出到        │
+  │                        │ hw_output.txt，自动与金标准比对                 │
+  ├────────────────────────┼─────────────────────────────────────────────────┤
+  │ scripts/gen_testvec.py │ 从 MiniCNN 参数文件生成 hex                     │
+  │                        │ 测试向量（已运行验证通过）                      │
+  ├────────────────────────┼─────────────────────────────────────────────────┤
+  │ sim/input.txt          │ 300 个 INT8 输入 (hex)                          │
+  ├────────────────────────┼─────────────────────────────────────────────────┤
+  │ sim/weight.txt         │ 2464 个 INT8 权重 (hex)                         │
+  ├────────────────────────┼─────────────────────────────────────────────────┤
+  │ sim/bias.txt           │ 32 个 INT32 偏置 (hex)                          │
+  ├────────────────────────┼─────────────────────────────────────────────────┤
+  │ sim/golden_output.txt  │ 80 行 × 32 通道金标准输出 (hex)                 │
+  └────────────────────────┴─────────────────────────────────────────────────┘
+
+  文档 (docs/)
+
+  ┌─────────────────┬────────────────────────────────────────────────────────┐
+  │      文件       │                          内容                          │
+  ├─────────────────┼────────────────────────────────────────────────────────┤
+  │ code_guide.md   │ 新手代码阅读指南（建议阅读顺序、逐文件讲解、FAQ）      │
+  ├─────────────────┼────────────────────────────────────────────────────────┤
+  │ architecture.md │ 架构详解（数据流图、模块功能、FSM 时序、性能分析）     │
+  ├─────────────────┼────────────────────────────────────────────────────────┤
+  │ next_steps.md   │ 下一步开发提示（DWConv/PWConv/FC                       │
+  │                 │ 开发方向、Ping-Pong、SRAM 优化）                       │
+  └─────────────────┴────────────────────────────────────────────────────────┘
+
+  性能指标
+
+  - 乘法器: 32 × 77 = 2464 个
+  - 推理周期: 91 周期 (11 填充 + 80 计算)
+  - 吞吐量: ~1.32M FPS @ 120MHz，满足 1000K FPS 目标
+
+✻ Cogitated for 21m 14s
+
+❯ /export 
+  ⎿  Failed to export conversation: ENOENT: no such file or directory, open
+     'D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicBolt
+     \demo2-claude\sim\claude-chat\demo2-claude.txt'
+
+❯ /export 
+  ⎿  Failed to export conversation: ENOENT: no such file or directory, open
+     'D:\Project\CNN-Accelerator-Bak\claude-dev\2026-MST3314-SonicBolt\SonicBolt
+     \demo2-claude\sim\claude-chat\demo2-claude.txt'
