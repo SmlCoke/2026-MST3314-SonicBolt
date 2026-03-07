@@ -13,7 +13,7 @@
 // 位宽分析：
 //   - 输入/权重各 8 bit signed → 乘积 16 bit signed
 //   - 77 个 16-bit 乘积求和 → 最大需要 16 + ceil(log2(77)) = 16+7 = 23 bit
-//   - 加上 INT32 偏置 → 32 bit 足够
+//   - 加上 INT16 偏置（符号扩展到 32 bit）→ 32 bit 足够
 //
 // 注意：
 //   该模块是纯组合逻辑，无时钟。32 个实例并行使用同一组输入数据，
@@ -33,7 +33,7 @@ module Conv1_MACUnit (
     // 排列方式与窗口数据一致
 
     // ---------- 偏置输入 ----------
-    input  wire [31:0]  bias_i,         // INT32 偏置
+    input  wire [15:0]  bias_i,         // INT16 偏置（规范要求）
 
     // ---------- 累加输出 ----------
     output wire [31:0]  acc_result_o    // INT32 累加结果
@@ -70,7 +70,7 @@ module Conv1_MACUnit (
     reg signed [31:0] sum;
     integer j;
     always @(*) begin
-        sum = $signed(bias_i);          // 初始值 = 偏置
+        sum = {{16{bias_i[15]}}, bias_i};  // 初始值 = 偏置（INT16 符号扩展至 32 位）
         for (j = 0; j < 77; j = j + 1) begin
             sum = sum + {{16{prod[j][15]}}, prod[j]};  // 符号扩展到 32 位后累加
         end

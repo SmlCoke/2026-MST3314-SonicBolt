@@ -11,7 +11,7 @@
 // 文件格式：
 //   input.txt         — 300 行，每行 1 个 2 位 hex (INT8 输入)
 //   weight.txt        — 2464 行，每行 1 个 2 位 hex (INT8 权重)
-//   bias.txt          — 32 行，每行 1 个 8 位 hex (INT32 偏置)
+//   bias.txt          — 32 行，每行 1 个 4 位 hex (INT16 偏置)
 //   golden_output.txt — 80 行，每行 32 个 2 位 hex (INT8 输出)
 //   hw_output.txt     — 仿真输出文件
 //
@@ -38,7 +38,7 @@ module tb_Conv1;
     reg         wt_valid;
 
     // 偏置加载
-    reg  [31:0] bias_data;
+    reg  [15:0] bias_data;
     reg         bias_valid;
 
     // 输入 SRAM 接口
@@ -57,7 +57,7 @@ module tb_Conv1;
     // ======================== 测试数据存储 ========================
     reg [7:0]  input_mem  [0:299];    // 300 个 INT8 输入值
     reg [7:0]  weight_mem [0:2463];   // 2464 个 INT8 权重
-    reg [31:0] bias_mem   [0:31];     // 32 个 INT32 偏置
+    reg [15:0] bias_mem   [0:31];     // 32 个 INT16 偏置
     reg [7:0]  golden_mem [0:2559];   // 32×80 个 INT8 金标准输出
 
     // ======================== 输入 SRAM ========================
@@ -127,7 +127,7 @@ module tb_Conv1;
         start     = 1'b0;
         wt_data   = 8'd0;
         wt_valid  = 1'b0;
-        bias_data = 32'd0;
+        bias_data = 16'd0;
         bias_valid = 1'b0;
         pass_cnt  = 0;
         fail_cnt  = 0;

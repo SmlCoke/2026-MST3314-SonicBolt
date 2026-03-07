@@ -6,7 +6,7 @@ gen_testvec.py — 为 Conv1 RTL 仿真生成测试向量
 生成文件：
   sim/input.txt         — 300 个 INT8 输入值 (hex, 每行一个值)
   sim/weight.txt        — 2464 个 INT8 权重 (hex, 每行一个值)
-  sim/bias.txt          — 32 个 INT32 偏置值 (hex, 每行一个值)
+    sim/bias.txt          — 32 个 INT16 偏置值 (hex, 每行一个值)
   sim/golden_output.txt — 2560 个 INT8 金标准输出 (hex, 每行 32 个值空格分隔)
 
 用法: python gen_testvec.py
@@ -29,11 +29,11 @@ def int8_to_hex(val):
         val = val + 256
     return f"{val:02x}"
 
-def int32_to_hex(val):
-    """将 signed INT32 值转为 8 位十六进制字符串（二进制补码）"""
+def int16_to_hex(val):
+    """将 signed INT16 值转为 4 位十六进制字符串（二进制补码）"""
     if val < 0:
-        val = val + (1 << 32)
-    return f"{val:08x}"
+        val = val + (1 << 16)
+    return f"{val:04x}"
 
 # ==================== 读取参数文件 ====================
 def read_conv_weights(param_dir):
@@ -132,11 +132,11 @@ def gen_weight_hex(weights, out_path):
 
 def gen_bias_hex(biases, out_path):
     """
-    生成 bias.txt: 32 行，每行一个 8 位 hex (INT32，保留精度)
+    生成 bias.txt: 32 行，每行一个 4 位 hex (INT16)
     """
     with open(out_path, "w") as f:
         for val in biases:
-            f.write(int32_to_hex(val) + "\n")
+            f.write(int16_to_hex(val) + "\n")
     print(f"  [OK] bias.txt: {len(biases)} values")
 
 def gen_golden_hex(channels, out_path):

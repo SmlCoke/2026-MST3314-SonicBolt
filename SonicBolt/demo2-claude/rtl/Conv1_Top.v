@@ -3,7 +3,7 @@
 // Description: 第一层标准卷积 (Conv1) 顶层模块
 //
 // 功能概述：
-//   实现 (1,30,10) → Conv(32,11×7) → ReLU → (32,20,4) 的完整卷积运算。
+//   实现 (1,30,10) → Conv(32,11×7) → Requant → (32,20,4) 的完整卷积运算。
 //   采用 32 通道全并行架构，每个时钟周期输出一个空间位置的 32 个通道值。
 //
 // 架构特点：
@@ -42,7 +42,7 @@ module Conv1_Top (
     // ==================== 偏置加载接口 ====================
     // 在 LOAD_BIAS 状态下，外部逐周期送入偏置
     // 顺序: bias[0], bias[1], ..., bias[31]
-    input  wire [31:0] bias_data_i,     // INT32 偏置数据
+    input  wire [15:0] bias_data_i,     // INT16 偏置数据（规范要求）
     input  wire        bias_valid_i,    // 偏置数据有效
 
     // ==================== 输入 SRAM 接口 ====================
@@ -98,8 +98,8 @@ module Conv1_Top (
     // 使用一维数组存储: weight_mem[filter_id * 77 + pos]
     reg [7:0] weight_mem [0:2463];
 
-    // 32 个 INT32 偏置
-    reg [31:0] bias_mem [0:31];
+    // 32 个 INT16 偏置（规范要求）
+    reg [15:0] bias_mem [0:31];
 
     // ================================================================
     //                   行缓冲器实例化
@@ -151,7 +151,9 @@ module Conv1_Top (
 
     integer r, c;
     always @(*) begin
-        window_flat = 616'd0;
+        // window_flat = 616'd0; 
+        // 由于每个位置都被赋值，理论上不需要初始化为 0，避免无意义的翻转
+        // fj0307: 这里会有616个4:1 MUX
         for (r = 0; r < KERNEL_H; r = r + 1) begin
             for (c = 0; c < KERNEL_W; c = c + 1) begin
                 // 从行缓冲第 r 行中提取第 (col_cnt + c) 个像素
@@ -169,7 +171,7 @@ module Conv1_Top (
 
     // 组装各 filter 的权重为 packed 格式
     wire [615:0] weight_packed [0:31]; // 32 个 filter 的 packed 权重
-    wire [31:0]  bias_packed   [0:31]; // 32 个偏置
+    wire [15:0]  bias_packed   [0:31]; // 32 个偏置（INT16）
 
     // MAC 输出 (组合逻辑)
     wire [31:0]  mac_result [0:31];
@@ -178,13 +180,14 @@ module Conv1_Top (
     wire [7:0]   quant_result [0:31];
 
     genvar f, p;
-    generate
+    generate // 这段 generate 逻辑在综合时会展开成 32 个并行的 MAC + Requant 实例
         for (f = 0; f < NUM_FILTERS; f = f + 1) begin : gen_filter
-
+            // 32 个 Filter 全部并行计算
             // ---------- 权重打包 ----------
             // 从 weight_mem 中取出 filter f 的 77 个权重，打包为 616-bit
             // weight_packed[f] = {weight_mem[f*77+76], ..., weight_mem[f*77+1], weight_mem[f*77+0]}
             wire [615:0] w_pack;
+            // w_pack 存放第 f 个卷积核的全部77个权重
             for (p = 0; p < KERNEL_SIZE; p = p + 1) begin : gen_wt_pack
                 assign w_pack[p*8 +: 8] = weight_mem[f * KERNEL_SIZE + p];
             end
@@ -316,6 +319,7 @@ module Conv1_Top (
             fill_cnt <= fill_cnt + 4'd1;
         end
     end
+    // 每个周期在 FILL_LB 阶段读取一行数据写入行缓冲，直到填满 11 行
 
     // ================================================================
     //                   计算阶段计数器
