@@ -121,7 +121,17 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 
 ---
 
-### 3.4 `SonicBolt/` — Verilog RTL 实现（待补充）
+### 3.4 `Scripts/` — 辅助工具脚本
+
+包含一些实用的脚本，如：
+- `search_files_by_name.py`：根据文件名片段搜索项目中的相关文件，方便快速定位资料、参数或代码片段。使用方法：
+  ```bash
+  python search_files_by_name.py <root_directory> <filename_keyword>
+  ```
+
+---
+
+### 3.5 `SonicBolt/` — Verilog RTL 实现（待补充）
 
 本团队针对**高性能场景**设计的 Verilog 实现，目标：
 
