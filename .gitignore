@@ -28,4 +28,3 @@ MiniCNN/src
 # 仿真的结果文件
 *.vcd
 *.log
-*.vvp
