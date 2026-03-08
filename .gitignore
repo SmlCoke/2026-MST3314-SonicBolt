@@ -26,6 +26,6 @@ Ins.md
 MiniCNN/src
 
 # 仿真的结果文件
-simv
 *.vcd
 *.log
+*.vvp
