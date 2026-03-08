@@ -195,6 +195,10 @@ module tb_Conv1;
                              out_count, ch_idx, hw_byte, gd_byte);
                     error_count = error_count + 1;
                 end
+                else begin
+                    $display("[INFO] out_idx=%0d ch=%0d: HW=0x%02x, Golden=0x%02x",
+                             out_count, ch_idx, hw_byte, gd_byte);
+                end
             end
 
             out_count = out_count + 1;

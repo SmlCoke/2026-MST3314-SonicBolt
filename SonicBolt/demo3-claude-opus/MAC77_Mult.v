@@ -51,7 +51,7 @@ module MAC77_Mult (
             wire signed [7:0] act_elem = act_flat[i*8 +: 8];
             wire signed [7:0] wgt_elem = wgt_flat[i*8 +: 8];
             wire signed [15:0] product = act_elem * wgt_elem;
-
+            // fj0308: 这里是无论输入(mac_valid_in)是否有效都一定会计算乘法，可否以改成仅在 valid_in=1 时才计算乘法？（即乘法器输入加上 valid_in 作为使能信号）以降低功耗？
             always @(posedge clk or negedge rst_n) begin
                 if (!rst_n)
                     prod_flat[i*16 +: 16] <= 16'sd0;

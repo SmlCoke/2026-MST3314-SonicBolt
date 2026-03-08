@@ -231,9 +231,11 @@ module Conv1_Top (
 
             S_FILL_LB: begin
                 if (fill_cnt == 4'd11 && !row_req_sent && !in_row_valid)
+                // 在 Line Buffer 填充最后一行的下一个时钟上升沿再设置 state_next
                     state_next = S_CALC;
             end
-
+            
+            
             S_CALC: begin
                 // 所有 80 个输出位置已发射到流水线
                 if (row_cnt == 5'd19 && col_cnt == 2'd3)
@@ -356,6 +358,8 @@ module Conv1_Top (
                                 // 还有下一行要处理
                                 row_cnt       <= row_cnt + 5'd1;
                                 next_row_addr <= lb_start_row + KH[4:0];
+                                // fj0308: 这里的 lb_start_row 代表着 lb 的第一行在输入特征图中的行号(0起)
+                                // fj0308: next_row_addr 是要推送到 lb 下一行的输入特征图行地址(0起)
                                 wait_row      <= 1'b1;
                                 row_req_sent  <= 1'b0;
                             end
