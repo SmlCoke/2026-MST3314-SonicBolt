@@ -58,11 +58,17 @@ CNN-Accelerator/
 │   ├── test_golden.py          # 金标准对比验证
 │   └── README.md               # 详细说明与学习指南
 │
+├── Scripts/                    # 辅助脚本（如参数转换、仿真自动化等）
+│   └── search_files_by_name    # 根据文件名片段搜索文件
+│
 └── SonicBolt/                  # ★ RTL 实现（Verilog，待补充）
+    ├── demo1-codex             # 第一版 Conv1 实现，由 Codex 5.3 生成，供参考学习
+    ├── demo2-claude            # 第二版 Conv1 实现，由 Claude Opus 4.6 生成，供参考学习 
+    ├── demo2-claude-opus       # 第三版 Conv1 实现，由 Claude Opus 4.6 生成，修复了第二版的 Bug 
     └── pre-test/               # 预览测试模块，与真实 RTL 实现基本无关，用于测试
+
 ```
 
----
 
 ## III. 各模块说明
 
