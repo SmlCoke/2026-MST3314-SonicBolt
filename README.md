@@ -36,14 +36,6 @@ CNN-Accelerator/
 │   ├── PyCode-Specifications.md# Python 行为模型编写规范
 │   └── Skill-Plan.md           # 技能树与推进计划（参考）
 │
-├── MiniCNN/                    # 参考资料：上一届课程的示例项目
-│   └── sim/samples/            # ★ 模型参数与测试数据（GitHub 上仅保留此目录）
-│       ├── Param/              # 网络权重与偏置
-│       ├── Scale/              # 量化/重量化参数
-│       ├── In/                 # 496 个输入 MFCC 特征图（INT8）
-│       ├── Test/               # 单样本各层金标准输出
-│       └── sigmoid_lookup_table.txt  # Sigmoid LUT（256 条目，FP32）
-│
 ├── Notes/                      # 学习笔记
 │   ├── demo                    # 示例 verilog 模块，与 slices/下的相关笔记一同阅读
 │   ├── guide/                  # AI 给出的学习/涉及指导
@@ -61,12 +53,15 @@ CNN-Accelerator/
 ├── Scripts/                    # 辅助脚本（如参数转换、仿真自动化等）
 │   └── search_files_by_name    # 根据文件名片段搜索文件
 │
-└── SonicBolt/                  # ★ RTL 实现（Verilog，待补充）
-    ├── demo1-codex             # 第一版 Conv1 实现，由 Codex 5.3 生成，供参考学习
-    ├── demo2-claude            # 第二版 Conv1 实现，由 Claude Opus 4.6 生成，供参考学习 
-    ├── demo2-claude-opus       # 第三版 Conv1 实现，由 Claude Opus 4.6 生成，修复了第二版的 Bug 
-    └── pre-test/               # 预览测试模块，与真实 RTL 实现基本无关，用于测试
-
+└── SonicBolt/                  # ★ RTL 实现（本团队编写）
+    ├── data/                   # 测试数据和网络参数，供仿真使用
+    ├── demo/
+    │   ├── demo1-codex         # 第一版 Conv1 实现，由 Codex 5.3 生成，供参考学习
+    │   ├── demo2-claude        # 第二版 Conv1 实现，由 Claude Opus 4.6 生成，供参考学习 
+    │   ├── demo2-claude-opus   # 第三版 Conv1 实现，由 Claude Opus 4.6 生成，修复了第二版的 Bug 
+    │   └── pre-test/           # 预览测试模块，与真实 RTL 实现基本无关，用于测试
+    └── src/
+        ├── conv/              # Conv 层 RTL 实现
 ```
 
 
@@ -83,24 +78,7 @@ CNN-Accelerator/
 
 ---
 
-### 3.2 `MiniCNN/sim/samples/` — 模型参数与测试数据
-
-助教统一提供的网络参数和测试数据，是整个项目的数据基础：
-
-| 目录/文件 | 内容 |
-|---|---|
-| `Param/` | 各层权重（INT8）和偏置（INT16）的 txt 文件 |
-| `Scale/Rescale.txt` | 各层重量化参数：浮点 M 值及定点化 `(M0, n)` |
-| `Scale/Scale.txt` | 量化 Scale 参数，含 `Linear_Out_Scale`（Sigmoid 反量化用）|
-| `In/0.txt` ~ `In/495.txt` | 496 个 INT8 MFCC 输入样本，每个 30×10 |
-| `Test/` | 单样本各层输出的金标准，用于逐层调试 |
-| `sigmoid_lookup_table.txt` | 256 条目 Sigmoid LUT，IEEE 754 FP32 十六进制格式 |
-
-> **注**：上一届参考项目的 Verilog 源码在发布前已从仓库中移除，仅保留上述参数文件。参数文件由课程助教提供，不涉及知识产权。
-
----
-
-### 3.3 `PyRTL-CNN/` — Python 行为级仿真模型
+### 3.2 `PyRTL-CNN/` — Python 行为级仿真模型
 
 在正式编写 Verilog 之前，用纯 Python 实现的完整 CNN 行为模型，作用：
 
@@ -121,7 +99,7 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 
 ---
 
-### 3.4 `Scripts/` — 辅助工具脚本
+### 3.3 `Scripts/` — 辅助工具脚本
 
 包含一些实用的脚本，如：
 - `search_files_by_name.py`：根据文件名片段搜索项目中的相关文件，方便快速定位资料、参数或代码片段。使用方法：
@@ -131,7 +109,7 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 
 ---
 
-### 3.5 `SonicBolt/` — Verilog RTL 实现（待补充）
+### 3.4 `SonicBolt/` — Verilog RTL 实现（待补充）
 
 本团队针对**高性能场景**设计的 Verilog 实现，目标：
 
@@ -145,7 +123,7 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| 架构研究 | 阅读规范、参考 MiniCNN、建立 Python 行为模型 | ✅ 完成 |
+| 架构研究 | 阅读规范、建立 Python 行为模型 | ✅ 完成 |
 | RTL 设计 | Verilog 模块编写（SonicBolt） | 🔲 进行中 |
 | 逻辑仿真 | Testbench 编写与功能验证 | 🔲 待开始 |
 | 逻辑综合 | Design Compiler，时序/面积/功耗分析 | 🔲 待开始 |
