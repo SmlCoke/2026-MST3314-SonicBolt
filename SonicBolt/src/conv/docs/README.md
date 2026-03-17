@@ -6,7 +6,7 @@
 1. 输入： $C\times H\times W = 1\times 30\times 10$ 的输入特征图（Feature map），每个数据位宽 INT8
 2. 卷积核尺寸： $N\times C\times H\times W = 32\times 1\times 11\times 7$ ，每个权重位宽 INT8
 3. 偏置： $N = 32$ 个偏置，每个数据位宽 INT16
-4. 输出特征图尺寸：$C\times H\times W = 32\times 20\times 4$ ，每个数据位宽 INT8
+4. 输出特征图尺寸： $C\times H\times W = 32\times 20\times 4$ ，每个数据位宽 INT8
 
 ## II. 计算思路
 
@@ -89,7 +89,7 @@ Conv 层在计算时，首先固定 pos，然后每个时钟上升沿更新 grou
 
 位宽来源是： $4(\text{channels})\times 7(\text{weights})\times 8(\text{bit}) = 224\text{bit}$
 深度 $4$ 则对应： $8$ 个输出通道组 $\text{group}=0\sim 7$
-bank 编号规则为： $\text{bank} = \text{kernel\_row}$
+bank 编号规则为： $\text{bank} = \text{kernel-row}$
 
 所以对于一个固定 $\text{group}$ ，11 个 bank 同时读出后，可以拼成完整的： $4 \times 11 \times 7 \times 8\text{bit} = 2464\text{bit}$
 
