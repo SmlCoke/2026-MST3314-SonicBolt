@@ -30,6 +30,12 @@ Input(1,30,10) → Conv(32,1,11,7) → ReLU
 ```
 CNN-Accelerator/
 │
+├── Demo/
+│   ├── demo1-codex             # 第一版 Conv 层实现，由 Codex 5.3 生成，供参考学习
+│   ├── demo2-claude            # 第二版 Conv 层实现，由 Claude Opus 4.6 生成，供参考学习 
+│   ├── demo2-claude-opus       # 第三版 Conv 层实现，由 Claude Opus 4.6 生成，修复了第二版的 Bug 
+│   └── pre-test/               # 预览测试模块，与真实 RTL 实现基本无关，用于测试
+│
 ├── Materials/                  # 课程资料
 │   ├── introduction.md         # 课程简介与评分标准
 │   ├── Design_Specifications.md# 电路设计规范（网络结构、层参数、重量化公式）
@@ -55,11 +61,6 @@ CNN-Accelerator/
 │
 └── SonicBolt/                  # ★ RTL 实现（本团队编写）
     ├── data/                   # 测试数据和网络参数，供仿真使用
-    ├── demo/
-    │   ├── demo1-codex         # 第一版 Conv1 实现，由 Codex 5.3 生成，供参考学习
-    │   ├── demo2-claude        # 第二版 Conv1 实现，由 Claude Opus 4.6 生成，供参考学习 
-    │   ├── demo2-claude-opus   # 第三版 Conv1 实现，由 Claude Opus 4.6 生成，修复了第二版的 Bug 
-    │   └── pre-test/           # 预览测试模块，与真实 RTL 实现基本无关，用于测试
     └── src/
         ├── conv/              # Conv 层 RTL 实现
 ```
@@ -109,7 +110,18 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 
 ---
 
-### 3.4 `SonicBolt/` — Verilog RTL 实现（待补充）
+### 3.4 `Demo/` — AI 生成的示例实现
+
+包含 Codex 5.3 和 Claude Opus 4.6 生成的多个版本的 Conv 实现，供学习和参考。
+
+**注意**：这些实现可能存在功能性错误或性能问题，不建议直接使用于正式设计，但可以作为理解 Conv 层设计思路的参考。
+
+> 此外，在 SonicBolt 的 Conv 实现后，`Demo/` 版本中的所有 Conv 模块由于位宽过大或者关键路径过长等各种原因，已经被正式舍弃，没有被应用到 SonicBolt 架构中。
+
+
+---
+
+### 3.5 `SonicBolt/` — Verilog RTL 实现（待补充）
 
 本团队针对**高性能场景**设计的 Verilog 实现，目标：
 
