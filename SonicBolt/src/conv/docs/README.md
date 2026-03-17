@@ -3,22 +3,22 @@
 ## I. 整体架构
 
 本子系统实现 CNN 加速器中的第一层核心计算层：标准卷积。
-1. 输入：$C\times H\times W = 1\times 30\times 10$ 的输入特征图（Feature map），每个数据位宽 INT8
-2. 卷积核尺寸：$N\times C\times H\times W = 32\times 1\times 11\times 7$，每个权重位宽 INT8
-3. 偏置：$N = 32$ 个偏置，每个数据位宽 INT16
-4. 输出特征图尺寸：$C\times H\times W = 32\times 20\times 4$，每个数据位宽 INT8
+1. 输入： $C\times H\times W = 1\times 30\times 10$ 的输入特征图（Feature map），每个数据位宽 INT8
+2. 卷积核尺寸： $N\times C\times H\times W = 32\times 1\times 11\times 7$ ，每个权重位宽 INT8
+3. 偏置： $N = 32$ 个偏置，每个数据位宽 INT16
+4. 输出特征图尺寸：$C\times H\times W = 32\times 20\times 4$ ，每个数据位宽 INT8
 
 ## II. 计算思路
 
 ### 2.1 每次执行的数据尺寸和数据量——Token 定义
 采用流水线架构设计，每次处理的数据量为：
-1. **输入端**：Feature map 的一部分（一个维度为 $H\times W=14\times10$）的**窗口**，我们称为一个 **pos**。每个窗口包含16个卷积窗口，因为$11\times7$尺寸的卷积核在行方向和列方向都能滑动4次。
+1. **输入端**：Feature map 的一部分（一个维度为 $H\times W=14\times10$ ）的**窗口**，我们称为一个 **pos**。每个窗口包含16个卷积窗口，因为 $11\times7$ 尺寸的卷积核在行方向和列方向都能滑动4次。
     > 为了覆盖整个输入特征图，最终生成 PWConv 输出 9×32 中的每通道的9个输出值，可以知道，这个卷积窗口需要在输入特征图上**滑动9次**，每次向下滑动 **2** 行，因此 pos 的取值范围是 **0\sim 8** 
 2. **卷积核**：每次处理**4个卷积核**，我们称为一个 **group**，总共将32个卷积核分成8个 group
-3. **输出端**：对应的输出特征图的一部分，即一块维度为$C\times H\times W = 4\times 4\times 4$的数据块，我们称为一个 **tile**
+3. **输出端**：对应的输出特征图的一部分，即一块维度为 $C\times H\times W = 4\times 4\times 4$ 的数据块，我们称为一个 **tile**
 
 ### 2.2 吞吐
-我们在设计架构的时候，目标是期望 Conv 层保证在启动流水线后，**每个周期都能输出一个 tile 的数据块**，直到所有卷积核和输入特征图的卷积窗口都被处理完，总共需要耗费 $|\text{pos}|\times |\text{group}| = 72$ 个周期。（$|\text{var}|$表示 var 能够取值的数量）。
+我们在设计架构的时候，目标是期望 Conv 层保证在启动流水线后，**每个周期都能输出一个 tile 的数据块**，直到所有卷积核和输入特征图的卷积窗口都被处理完，总共需要耗费 $|\text{pos}|\times |\text{group}| = 72$ 个周期。（ $|\text{var}|$ 表示 var 能够取值的数量）。
 
 因此，要满足 $1000k \text{FPS}$ 的指标，所需要的时钟频率 $f_{\text{std}}$ 和输出所有 tile 的周期数 $N$ 之间的关系为：
 
@@ -34,8 +34,8 @@ Conv 层在计算时，首先固定 pos，然后每个时钟上升沿更新 grou
 **因此，Conv 只层需要在 72 个时钟上升沿发射完所有 72 个 token，之后每个周期都能输出一个 tile 的数据块。**
 
 例如：
-在一个时钟上升沿，$\text{pos} = 0, \text{group} = 0$ 时，此时窗口为输入特征图最上方的14行数据，即：$\text{row} \in [0,13], \text{col} \in [0,9]$，卷积核对应32个卷积核中的前4个，即$0\sim3$。
-此后下一个时钟上升沿，$\text{pos} = 0, \text{group} = 1$，此时窗口不变，卷积核 group 变为后四个，即$4\sim7$。
+在一个时钟上升沿， $\text{pos} = 0, \text{group} = 0$ 时，此时窗口为输入特征图最上方的14行数据，即： $\text{row} \in [0,13], \text{col} \in [0,9]$ ，卷积核对应32个卷积核中的前4个，即$0\sim3$。
+此后下一个时钟上升沿， $\text{pos} = 0, \text{group} = 1$ ，此时窗口不变，卷积核 group 变为后四个，即$4\sim7$。
 
 以此类推，最终在72个时钟周期内，全部数据发射进入流水线，并且一段时间之后，每个周期都能输出一个 tile 的数据块。
 
@@ -71,7 +71,7 @@ Conv 层在计算时，首先固定 pos，然后每个时钟上升沿更新 grou
 ### 3.3 输入缓存：conv_shared_input_buffer
 
 
-当前 Conv 输入图为：$30 \times 10 \times 8\text{bit}$，整帧总数据量为：$30 \times 10 \times 8 = 2400\text{bit}$
+当前 Conv 输入图为： $30 \times 10 \times 8\text{bit}$ ，整帧总数据量为： $30 \times 10 \times 8 = 2400\text{bit}$
 
 当前版本直接在 `conv_shared_input_buffer` 内维护两份整帧双缓冲 cache：`frame_cache0` 和 `frame_cache1`，它们分别对应系统语义上的：`ping`和`pong`
 
@@ -85,22 +85,22 @@ Conv 层在计算时，首先固定 pos，然后每个时钟上升沿更新 grou
 当前 Conv 权重不是打包成一个超宽单 word，而是拆成 $11$ 个 bank：
 - $11$ 个 kernel_row
 - 每个 kernel_row 直接对应 1 个 bank
-- 每个权重 bank 的规格为：$8\text{(depth)}\times224\text{bit(word)}$
+- 每个权重 bank 的规格为： $8\text{(depth)}\times224\text{bit(word)}$
 
-位宽来源是：$4(\text{channels})\times 7(\text{weights})\times 8(\text{bit}) = 224\text{bit}$
-深度 $4$ 则对应：$8$ 个输出通道组 $\text{group}=0\sim 7$
-bank 编号规则为：$\text{bank} = \text{kernel\_row}$
+位宽来源是： $4(\text{channels})\times 7(\text{weights})\times 8(\text{bit}) = 224\text{bit}$
+深度 $4$ 则对应： $8$ 个输出通道组 $\text{group}=0\sim 7$
+bank 编号规则为： $\text{bank} = \text{kernel\_row}$
 
-所以对于一个固定 $\text{group}$，11 个 bank 同时读出后，可以拼成完整的：$4 \times 11 \times 7 \times 8\text{bit} = 2464\text{bit}$
+所以对于一个固定 $\text{group}$ ，11 个 bank 同时读出后，可以拼成完整的： $4 \times 11 \times 7 \times 8\text{bit} = 2464\text{bit}$
 
 这正是 `conv_tile_mac` 的权重输入总线宽度。
 
 #### 3.4.2 bias bank
 bias 采用 1 个 bank：每个 bank $8(\text{depth})\times 64\text{bit(word)}$
 
-位宽来源是：$4 \times \text{INT16} = 64\text{bit}$
+位宽来源是： $4 \times \text{INT16} = 64\text{bit}$
 
-一个 bank 读出后，可以得到当前 group 的完整：$4 \times \text{INT16} = 64\text{bit}$
+一个 bank 读出后，可以得到当前 group 的完整： $4 \times \text{INT16} = 64\text{bit}$
 
 这 11 个权重 bank 和 1 个偏置 bank 共同覆盖的是：
 
