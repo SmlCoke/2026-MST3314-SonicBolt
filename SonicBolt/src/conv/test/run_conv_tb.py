@@ -44,8 +44,8 @@ from typing import Dict, List, Tuple
 # ---------------------------------------------------------------------------
 ROOT_DIR = Path(__file__).resolve().parents[4]
 CONV_DIR = ROOT_DIR / "SonicBolt" / "src" / "conv"
-TEST_DIR = CONV_DIR / "test"
 DATA_DIR = ROOT_DIR / "SonicBolt" / "data"
+TEST_DIR = CONV_DIR / "test"
 PREP_DIR = DATA_DIR / "prepared_conv_test"
 RESULTS_DIR = TEST_DIR / "results"
 
