@@ -18,7 +18,7 @@ import re
 # 路径配置
 # ─────────────────────────────────────────────────────────────────────────────
 _THIS_DIR  = os.path.dirname(os.path.abspath(__file__))
-_BASE_DIR  = os.path.normpath(os.path.join(_THIS_DIR, '..', 'MiniCNN', 'sim', 'samples'))
+_BASE_DIR  = os.path.normpath(os.path.join(_THIS_DIR, '..', 'SonicBolt', 'data'))
 _PARAM_DIR = os.path.join(_BASE_DIR, 'Param')
 _SCALE_DIR = os.path.join(_BASE_DIR, 'Scale')
 _IN_DIR    = os.path.join(_BASE_DIR, 'In')
