@@ -1,6 +1,10 @@
 `timescale 1ns / 1ps
 /*
  * 模块名称: conv_tile_mac_bias_add
+ * 作者: SonicBolt 团队
+ * 日期: 2026-03-15
+ * 版本: v1.0
+ *
  * 功能概述:
  *   对 64 个卷积和执行 bias 广播相加。
  *

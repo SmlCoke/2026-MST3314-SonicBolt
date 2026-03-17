@@ -1,5 +1,8 @@
 ﻿# Conv1 高吞吐子系统设计说明
 
+!!! note "注意"
+    Conv 的输出 tile 是 $4\times 4\times 4 \times 8bit$ 张量
+    排布方式：大通道编号在前$\rightarrow$大编号行在前$\rightarrow$大编号列在前
 ## 1. 设计目标
 当前 `SonicBolt/src/conv` 的目标不是做一个“先算完整 Conv1 feature map，再把结果写回 SRAM”的独立层模块，而是直接对齐最终整网高吞吐实现。
 

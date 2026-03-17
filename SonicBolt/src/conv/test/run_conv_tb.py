@@ -18,6 +18,8 @@
     - 默认不开波形
     - 默认每个样本单独运行一次 vvp
 
+执行方式:
+    python run_conv_tb.py [--sample-count N] [--start-index M] [--wave] [--keep-build]
 输出目录:
     所有日志、编译产物和比对结果统一写入:
         SonicBolt/src/conv/test/results/
@@ -37,7 +39,7 @@ from typing import Dict, List, Tuple
 
 # ---------------------------------------------------------------------------
 # 目录常量
-# ROOT_DIR 回到整个 MiniCNN 仓库根目录
+# ROOT_DIR 回到整个 CNN-Accelerator 仓库根目录
 # 后续路径都基于这个根目录拼出来
 # ---------------------------------------------------------------------------
 ROOT_DIR = Path(__file__).resolve().parents[4]
@@ -59,6 +61,8 @@ TILE_HEX_LEN = 128   # 512bit tile 对应 128 个十六进制字符
 TILE_RE = re.compile(
     r"^TILE sample=(?P<sample>\d+) pos=(?P<pos>\d+) group=(?P<group>\d+) data=(?P<data>[0-9a-fA-F]+)$"
 )
+# ^ 和 $ 确保整行完全匹配，避免误匹配其他日志行
+# (?P<name>...) 是命名捕获组，方便后续直接通过 groupdict() 获取 pos/group/data 等字段
 
 
 def parse_args() -> argparse.Namespace:
@@ -121,11 +125,11 @@ def ensure_results_dir(keep_build: bool) -> None:
 
 def preprocess_data(start_index: int, sample_count: int) -> None:
     """
-    调用数据预处理脚本，生成:
-    - 权重 mem
-    - 偏置 mem
-    - 输入行 mem
-    - 黄金 tile mem
+    调用 data/prepare_conv_test_data.py 数据预处理脚本，生成:
+    - 权重 mem (11*bank, depth=8, word_width = 4*7*8, 大编号通道在前，右侧权重在前)
+    - 偏置 mem (1*bank, depth=8, word_width = 4*8, 大编号通道在前)
+    - 输入行 mem (按 pos/group 索引，每组4*4*4 bit，大编号通道在前，右侧数据在前)
+    - 黄金 tile mem (格式完全同输入行 mem)
     """
     cmd = [
         sys.executable,
@@ -170,7 +174,7 @@ def compile_testbench() -> Path:
 def load_golden_tiles(sample_id: int) -> Dict[Tuple[int, int], str]:
     """
     读取某个样本的黄金 tile 文件。
-
+    黄金 tile 文件行格式：pos, group, tile_hex
     返回:
         key   = (pos, group)
         value = 128 位十六进制字符串
@@ -190,7 +194,7 @@ def load_golden_tiles(sample_id: int) -> Dict[Tuple[int, int], str]:
 def parse_sim_tiles(log_path: Path) -> Dict[Tuple[int, int], str]:
     """
     从单样本仿真日志中提取 testbench 打印的 TILE 行。
-
+    返回格式："TILE sample=%0d pos=%0d group=%0d data=%0128x"
     返回格式与 load_golden_tiles 一致，便于直接比对。
     """
     parsed: Dict[Tuple[int, int], str] = {}
@@ -224,7 +228,8 @@ def run_single_sample(vvp_path: Path, sample_id: int, enable_wave: bool) -> Tupl
     cmd = [
         "vvp",
         str(vvp_path),
-        f"+PREP_DIR={PREP_DIR.resolve()}",
+        # 以下是 testbench 需要的参数，全部通过 +var=value 形式传递
+        f"+PREP_DIR={PREP_DIR.resolve()}",   # 预处理数据根目录，例如 prepared_conv_test
         f"+SAMPLE_ID={sample_id}",
         f"+WAVE_FILE={wave_file.resolve()}",
         "+TIMEOUT_CYCLES=4000",
@@ -234,6 +239,8 @@ def run_single_sample(vvp_path: Path, sample_id: int, enable_wave: bool) -> Tupl
     result = run_cmd(cmd, cwd=TEST_DIR, stdout_path=stdout_log, stderr_path=stderr_log)
     if result.returncode != 0:
         raise RuntimeError(f"样本 {sample_id} 仿真失败，请检查 {stdout_log.name} / {stderr_log.name}")
+    # stdout_log 为标准输出日志
+    # parse_sim_tiles 会把 TILE 行解析成一个字典，key=(pos, group)，value=tile_hex_str
     return stdout_log, parse_sim_tiles(stdout_log)
 
 
@@ -244,7 +251,9 @@ def compare_sample(sample_id: int, sim_tiles: Dict[Tuple[int, int], str]) -> Lis
     返回:
         mismatch 字符串列表；为空表示该样本匹配成功
     """
+    # 解析黄金 tile 文件，得到同样格式的字典，便于直接比对
     golden_tiles = load_golden_tiles(sample_id)
+
     mismatches: List[str] = []
 
     if len(sim_tiles) != TOKEN_COUNT:
@@ -252,9 +261,9 @@ def compare_sample(sample_id: int, sim_tiles: Dict[Tuple[int, int], str]) -> Lis
 
     for pos in range(9):
         for group in range(GROUP_COUNT):
-            key = (pos, group)
-            sim_value = sim_tiles.get(key)
-            golden_value = golden_tiles.get(key)
+            key = (pos, group) # 获取 token 唯一标识
+            sim_value = sim_tiles.get(key) # 获取仿真值
+            golden_value = golden_tiles.get(key) # 获取标准值
             if sim_value is None:
                 mismatches.append(f"sample {sample_id}: missing tile pos={pos} group={group}")
             elif golden_value is None:
@@ -296,15 +305,20 @@ def main() -> int:
     # 建立 results 目录，并根据参数决定是否清理旧内容
     ensure_results_dir(args.keep_build)
 
+    # 调用 data/prepare_conv_test_data.py 生成预处理数据
     preprocess_data(args.start_index, args.sample_count)
+    
+    # 利用 iverilog 工具编译 Source RTL and Testbench，生成 vvp 可执行文件
     vvp_path = compile_testbench()
 
     all_mismatches: List[str] = []
     sample_summaries = []
     for sample_id in range(args.start_index, args.start_index + args.sample_count):
+        # 运行 vvp，得到该样本的仿真日志路径和解析出的 tile 字典(key = (pos, group)，value=tile_hex_str)
         stdout_log, sim_tiles = run_single_sample(vvp_path, sample_id, args.wave)
+        # mimatches 是字符串列表，存储每个 token 的对比结果（如果不匹配才存储）
         mismatches = compare_sample(sample_id, sim_tiles)
-        all_mismatches.extend(mismatches)
+        all_mismatches.extend(mismatches) # 如果完全匹配，这个列表就是空的
         sample_summaries.append(
             {
                 "sample_id": sample_id,

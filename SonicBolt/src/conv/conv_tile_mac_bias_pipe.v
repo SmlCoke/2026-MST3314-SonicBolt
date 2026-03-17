@@ -1,6 +1,10 @@
 `timescale 1ns / 1ps
 /*
  * 模块名称: conv_tile_mac_bias_pipe
+ * 作者: SonicBolt 团队
+ * 日期: 2026-03-15
+ * 版本: v1.0
+ *
  * 功能概述:
  *   为 conv_tile_mac 的 bias 总线提供单级寄存对齐。
  *

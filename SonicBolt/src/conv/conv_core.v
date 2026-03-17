@@ -2,7 +2,7 @@
 /*
  * 模块名称: conv_core
  * 功能概述: 面向 pos-major 数据流的 Conv1 计算核心
- * 作者: OpenAI Codex
+ * 作者: SonicBolt 团队
  * 日期: 2026-03-15
  * 版本: v1.0
  *

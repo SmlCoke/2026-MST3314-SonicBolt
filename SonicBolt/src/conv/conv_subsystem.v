@@ -2,8 +2,9 @@
 /*
  * 模块名称: conv_subsystem
  * 功能概述: 基于 pos-major 数据流的 Conv 子系统顶层
- * 作者: OpenAI Codex
+ * 作者: SonicBolt 团队
  * 日期: 2026-03-15
+ * 版本: v1.0
  *
  * 设计定位:
  *   - 当前只实现 Conv 层，但参数存储语义已经固定为“层内完整参数 SRAM”。
@@ -30,6 +31,7 @@ module conv_subsystem #(
     output wire          busy,             // 高电平表示 Conv 正在处理当前图
     output wire          done,             // 单拍完成脉冲
 
+    // ------------ 输入图像写控制信号 ------------
     input  wire          img_wr_en,        // 输入图像写使能
     input  wire          img_wr_buf_sel,   // 输入图像写入哪个 buffer
     input  wire [4:0]    img_wr_addr,      // 输入图像行地址，30 行因此使用 5bit
@@ -48,6 +50,7 @@ module conv_subsystem #(
     input  wire [2:0]    bias_wr_addr,     // Conv 偏置 group 地址
     input  wire [63:0]   bias_wr_data,     // 1 个偏置 word = 4 x INT16 = 64bit
 
+    // ------------ 输出数据流接口 ------------
     input  wire          out_stream_ready, // 预留的下游 ready，当前版本默认视作常高
     output wire          out_stream_valid, // 输出 tile 有效
     output wire [3:0]    out_stream_pos,   // 输出 tile 的 pos 编号
