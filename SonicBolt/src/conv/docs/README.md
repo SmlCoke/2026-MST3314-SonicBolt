@@ -120,18 +120,15 @@ conv_core 与 conv_shared_input_buffer 以及 conv_param_store 之间的接口�
 
 conv_core 内部包含一个 conv_tile_mac 模块，负责计算一个完整的 `4(ch) x 4(row) x 4(col)` INT32 tile。
 
-conv_tile_mac 内部包含五级流水线，分别对应五个计算模块：
+conv_tile_mac 内部包含三级流水线，分别对应三个计算模块：
 1. `conv_tile_mac_input_stage`：只做寄存，不做算术，把输入窗口、参数总线和元数据先切开，避免上游切窗和下游乘法直连
    - input/output: 14x10x8bit 输入窗口、11×4×7×8bit 权重、4×16bit 偏置
 2. `conv_tile_mac_row_mult`：11 模块并行的乘法单元，每个模块计算一个 kernel_row 的乘加结果，输出 64 个 INT19 的部分和
    - input: 4×10×8bit 输入条带，及其对应的4×7×8bit 卷积核行
    - output: 4×4×4×19bit 部分和
-3. `conv_tile_mac_row_reduce_l1`：对 11 个 kernel_row 行和以及偏置做第一层跨行归约，固定实现为 11 -> 6。
+3. `conv_tile_mac_row_add`：对 11 个 kernel_row 行和以及偏置求和，固定实现为 11 -> 1。
    - input: 11×(4×4×4×19bit) 部分和
-   - output: 6×(4×4×4×20bit) 行归中间和
-4. `conv_tile_mac_row_reduce_l2`：对第一层归约得到的 6 组中间和做第二层归约，固定实现为 6 -> 1。
-   - input: 6×(4×4×4×20bit) 行归中间和
-   - output: 4×4×4×32bit 64 个 INT32 的卷积和
+   - output: 4×4×4×32bit 结果
 
 此外，在流水线执行过程中，MAC 单元还封装了 `conv_tile_mac_meta_pipe`(元数据打拍模块) 和 `conv_tile_mac_bias_pipe`(偏置打拍模块)，**保证元数据和偏置能够在时序上正确对齐**到最终输出的 tile。
 

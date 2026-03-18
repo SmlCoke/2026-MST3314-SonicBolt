@@ -33,8 +33,7 @@
  *   - 当前流水拆分为:
  *       1. input_stage
  *       2. 11 个 row_mult
- *       3. row_reduce_l1
- *       4. row_reduce_l2
+ *       3. row_reduce_row_add
  */
 module conv_tile_mac (
     input  wire                clk,             // 时钟
@@ -99,18 +98,10 @@ module conv_tile_mac (
     wire [3:0]          stage2_pos;
     wire [2:0]          stage2_group;
 
-    wire [6*1280-1:0]   stage3_partial_bus;
     wire                stage3_valid;
     wire                stage3_last;
     wire [3:0]          stage3_pos;
     wire [2:0]          stage3_group;
-
-    wire                stage4_valid;
-    wire                stage4_last;
-    wire [3:0]          stage4_pos;
-    wire [2:0]          stage4_group;
-
-
 
 
     // ---------------------------------------------------------------------
@@ -261,19 +252,17 @@ module conv_tile_mac (
 
     // ---------------------------------------------------------------------
     // ------------------------- 第三级流水：stage3 --------------------------
-    // - 64 组 INT20 * 11 加法，做一级加法，得到 64 组 INT20 * 6 部分和
+    // - 64 组 INT20 * 11 加法，做一级加法，得到 64 组 INT32 部分和
     // - 元数据(valid, last, pos, group)打拍
-    // - bias 打拍
     // ---------------------------------------------------------------------
 
-    // stage3: 64个块，每一块计算 11 -> 6 的加法（这里能不能提高并行度？）
-    conv_tile_mac_row_reduce_l1 u_conv_tile_mac_row_reduce_l1 (
+    // stage3: 64个块，每一块计算 11 -> 1 的加法
+    conv_tile_mac_row_add u_conv_tile_mac_row_add (
         .clk(clk),
         .rst_n(rst_n),
         .in_row_sum_bus(stage2_row_sum_bus),
         .bias_data_bus(stage2_bias_bus),
-        .out_partial_bus(stage3_partial_bus)
-        // 每个1280存放64个 INT20, 不同组同一位置的 INT20 属于同一个输出块的部分和
+        .out_sum_bus(out_accum_bus)
     );
 
     // stage3: 元数据打拍
@@ -291,41 +280,10 @@ module conv_tile_mac (
     );
 
 
-    // ---------------------------------------------------------------------
-    // ------------------------- 第四级流水：stage4 --------------------------
-    // - 64 组 INT32 * 6 加法，做三级加法，得到 64 组 INT32
-    // - 元数据(valid, last, pos, group)打拍
-    // - bias 打拍
-    // ---------------------------------------------------------------------
-
-    // stage4: 6 个部分和 -> 1 个最终和
-    // 索引顺序：先通道、再输出行、再输出列
-    conv_tile_mac_row_reduce_l2 u_conv_tile_mac_row_reduce_l2 (
-        .clk(clk),
-        .rst_n(rst_n),
-        .in_partial_bus(stage3_partial_bus),
-        .out_sum_bus(out_accum_bus) 
-    );
-
-    // stage4: 元数据打拍
-    conv_tile_mac_meta_pipe u_meta_pipe_stage4 (
-        .clk(clk),
-        .rst_n(rst_n),
-        .in_valid(stage3_valid),
-        .in_last(stage3_last),
-        .in_pos(stage3_pos),
-        .in_group(stage3_group),
-        .out_valid(stage4_valid),
-        .out_last(stage4_last),
-        .out_pos(stage4_pos),
-        .out_group(stage4_group)
-    );
-
-
-    // stage4: 元数据传递给输出接口
-    assign out_valid     = stage4_valid;
-    assign out_last      = stage4_last;
-    assign out_pos       = stage4_pos;
-    assign out_group     = stage4_group;
+    // stage3: 元数据传递给输出接口
+    assign out_valid     = stage3_valid;
+    assign out_last      = stage3_last;
+    assign out_pos       = stage3_pos;
+    assign out_group     = stage3_group;
 
 endmodule

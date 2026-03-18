@@ -33,6 +33,7 @@ import re
 import shutil
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -301,6 +302,33 @@ def write_reports(summary: dict, mismatches: List[str]) -> None:
     (RESULTS_DIR / "mismatch_report.txt").write_text(report_text, encoding="utf-8")
 
 
+def format_sample_ids(sample_ids: List[int]) -> str:
+    """Format sample id list for terminal output."""
+    return ", ".join(str(sample_id) for sample_id in sample_ids) if sample_ids else "None"
+
+
+def add_box_field(lines: List[str], label: str, value: str, wrap_width: int = 54) -> None:
+    """Append a wrapped key/value field into the terminal summary box."""
+    prefix = f"{label:<12}: "
+    wrapped = textwrap.wrap(value, width=wrap_width) or ["None"]
+    lines.append(prefix + wrapped[0])
+    lines.extend((" " * len(prefix)) + item for item in wrapped[1:])
+
+
+def print_summary_box(title: str, fields: List[Tuple[str, str]]) -> None:
+    """Print a dashed terminal box with aligned summary fields."""
+    lines: List[str] = [title, ""]
+    for label, value in fields:
+        add_box_field(lines, label, value)
+
+    inner_width = max(len(line) for line in lines)
+    border = "+" + ("-" * (inner_width + 2)) + "+"
+    print(border)
+    for line in lines:
+        print(f"| {line.ljust(inner_width)} |")
+    print(border)
+
+
 def main() -> int:
     """
     主流程:
@@ -351,11 +379,34 @@ def main() -> int:
     }
     write_reports(summary, all_mismatches)
 
+    total_samples = args.sample_count
+    passed_sample_ids = [item["sample_id"] for item in sample_summaries if item["matched"]]
+    failed_sample_ids = [item["sample_id"] for item in sample_summaries if not item["matched"]]
+
     if all_mismatches:
-        print("Conv testbench finished with mismatches. See mismatch_report.txt")
+        print_summary_box(
+            "T_T  Conv testbench result: FAILED",
+            [
+                ("Total tests", str(total_samples)),
+                ("Passed count", str(len(passed_sample_ids))),
+                ("Passed IDs", format_sample_ids(passed_sample_ids)),
+                ("Failed count", str(len(failed_sample_ids))),
+                ("Failed IDs", format_sample_ids(failed_sample_ids)),
+                ("Full report", "mismatch_report.txt"),
+            ],
+        )
         return 1
 
-    print("Conv testbench finished successfully.")
+    print_summary_box(
+        "^_^  Conv testbench result: PASSED",
+        [
+            ("Total tests", str(total_samples)),
+            ("Passed count", str(len(passed_sample_ids))),
+            ("Passed IDs", format_sample_ids(passed_sample_ids)),
+            ("Failed count", str(len(failed_sample_ids))),
+            ("Failed IDs", format_sample_ids(failed_sample_ids)),
+        ],
+    )
     return 0
 
 

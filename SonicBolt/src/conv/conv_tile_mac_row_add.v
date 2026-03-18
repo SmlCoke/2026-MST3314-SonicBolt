@@ -3,24 +3,26 @@
  * 模块名称: conv_tile_mac_row_reduce_l1
  * 作者: SonicBolt 团队
  * 日期: 2026-03-18
- * 版本: v2.0
+ * 版本: v3.0
  *
  * 功能概述:
- *   对 11 个 kernel_row 行和做第一层跨行归约，固定实现为 11 -> 6。
+ *   对 11 个 kernel_row 行和做第一层跨行归约，固定实现为 11 -> 1。
+ *   我们期望综合工具可以自动推断处加法树，得到总级数为 log2(11) ≈ 4 的加法链。
  *
  * 输入组织:
  *   - in_row_sum_bus 是 11 组 1216bit 的拼接，总宽度 13376bit。
  *   - 每组 1216bit 对应一个 kernel_row 的 64 个 INT19 行和。
  *
  * 输出组织:
- *   - out_partial_bus 是 6 组 1280bit 的拼接，总宽度 7680bit。
+ *   - out_sum_bus 含 64 个 INT32，总宽度 2048bit。
  */
-module conv_tile_mac_row_reduce_l1 (
+module conv_tile_mac_row_add (
     input  wire                 clk,             // 时钟
     input  wire                 rst_n,           // 低有效复位
     input  wire [11*1216-1:0]   in_row_sum_bus,  // 11 组行和
     input  wire [4*16-1:0]      bias_data_bus,   // 4 个偏置
-    output reg  [6*1280-1:0]    out_partial_bus  // 6 组部分和
+    output reg  [2047:0]        out_sum_bus      // 最终 64 个 INT32 累加结果
+
 );
 
     integer idx;
@@ -45,7 +47,7 @@ module conv_tile_mac_row_reduce_l1 (
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            out_partial_bus <= {6*1280{1'b0}};
+            out_sum_bus <= {2048{1'b0}};
         end else begin
             // 0~15: ch1 16~31: ch2 32~47: ch3 48~63: ch4
             // 0~3: oy0 ox0~ox3 4~7: oy1 ox0~ox3 8~11: oy2 ox0~ox3 12~15: oy3 ox0~ox3
@@ -70,12 +72,7 @@ module conv_tile_mac_row_reduce_l1 (
                 partial_4 = row_8 + row_9;
                 partial_5 = row_10 + bias_val;
 
-                out_partial_bus[(0*1280) + idx*20 +: 20] <= partial_0;
-                out_partial_bus[(1*1280) + idx*20 +: 20] <= partial_1;
-                out_partial_bus[(2*1280) + idx*20 +: 20] <= partial_2;
-                out_partial_bus[(3*1280) + idx*20 +: 20] <= partial_3;
-                out_partial_bus[(4*1280) + idx*20 +: 20] <= partial_4;
-                out_partial_bus[(5*1280) + idx*20 +: 20] <= partial_5;
+                out_sum_bus[idx*32 +: 32] <= partial_0 + partial_1 + partial_2 + partial_3 + partial_4 + partial_5;
             end
         end
     end
