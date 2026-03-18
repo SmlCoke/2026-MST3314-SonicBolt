@@ -122,10 +122,19 @@ conv_core 内部包含一个 conv_tile_mac 模块，负责计算一个完整的 
 
 conv_tile_mac 内部包含五级流水线，分别对应五个计算模块：
 1. `conv_tile_mac_input_stage`：只做寄存，不做算术，把输入窗口、参数总线和元数据先切开，避免上游切窗和下游乘法直连
+   - input/output: 14x10x8bit 输入窗口、11×4×7×8bit 权重、4×16bit 偏置
 2. `conv_tile_mac_row_mult`：11 模块并行的乘法单元，每个模块计算一个 kernel_row 的乘加结果，输出 64 个 INT32 的部分和
+   - input: 4×10×8bit 输入条带，及其对应的4×7×8bit 卷积核行
+   - output: 4×4×4×32bit 部分和
 3. `conv_tile_mac_row_reduce_l1`：对 11 个 kernel_row 行和做第一层跨行归约，固定实现为 11 -> 6。
+   - input: 11×(4×4×4×32bit) 部分和
+   - output: 6×(4×4×4×32bit) 行归中间和
 4. `conv_tile_mac_row_reduce_l2`：对第一层归约得到的 6 组中间和做第二层归约，固定实现为 6 -> 1。
+   - input: 6×(4×4×4×32bit) 行归中间和
+   - output: 4×4×4×32bit 64 个 INT32 的卷积和
 5. `conv_tile_mac_bias_add`：对 64 个卷积和执行 bias 广播相加。
+   - input: 4×4×4×32bit 卷积和，4×16bit bias
+   - output: 4×4×4×32bit 输出结果
 
 此外，在流水线执行过程中，MAC 单元还封装了 `conv_tile_mac_meta_pipe`(元数据打拍模块) 和 `conv_tile_mac_bias_pipe`(偏置打拍模块)，**保证元数据和偏置能够在时序上正确对齐**到最终输出的 tile。
 
@@ -134,9 +143,15 @@ conv_tile_mac 内部包含五级流水线，分别对应五个计算模块：
 conv_core 内部还包含一个 conv_rescale_relu 模块，负责对 conv_tile_mac 输出的 64 个 INT32 结果做统一量化和 ReLU。
 
 conv_rescale_relu 内部包含三级流水线，分别对应三个计算模块：
-1. `conv_rescale_mut_stage`：量化流水第 1 级，只负责 64 个 INT32 与常数 M0 的乘法。
+1. `conv_rescale_mul_stage`：量化流水第 1 级，只负责 64 个 INT32 与常数 M0 的乘法。
+   - input: 4×4×4×32bit 输入结果
+   - output: 4×4×4×48bit 乘法结果
 2. `conv_rescale_shift_stage`：量化流水第 2 级，对乘法结果执行右移 shift。
+   - input: 4×4×4×48bit 乘法结果
+   - output: 4×4×4×32bit shift 结果
 3. `conv_rescale_saturate_stage`：量化流水第 3 级，只负责 ReLU、饱和和 pack。
+   - input: 4×4×4×32bit shift 结果
+   - output: 4×4×4×8bit 饱和截断结果
 
 ### IV. RTL 阅读指导
 在阅读 conv 的 RTL 代码时，建议按照以下顺序：
