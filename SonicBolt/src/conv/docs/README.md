@@ -136,16 +136,13 @@ conv_tile_mac 内部包含三级流水线，分别对应三个计算模块：
 
 conv_core 内部还包含一个 conv_rescale_relu 模块，负责对 conv_tile_mac 输出的 64 个 INT32 结果做统一量化和 ReLU。
 
-conv_rescale_relu 内部包含三级流水线，分别对应三个计算模块：
-1. `conv_rescale_mul_stage`：量化流水第 1 级，只负责 64 个 INT32 与常数 M0 的乘法。
+conv_rescale_relu 内部包含两级流水线，分别对应两个计算模块：
+1. `conv_rescale`：量化流水第 1 级，负责 64 个 INT32 与常数 M0 的乘法以及移位 SHIFT_N。
    - input: 4×4×4×32bit 输入结果
-   - output: 4×4×4×48bit 乘法结果
-2. `conv_rescale_shift_stage`：量化流水第 2 级，对乘法结果执行右移 shift。
-   - input: 4×4×4×48bit 乘法结果
-   - output: 4×4×4×32bit shift 结果
-3. `conv_rescale_saturate_stage`：量化流水第 3 级，只负责 ReLU、饱和和 pack。
-   - input: 4×4×4×32bit shift 结果
-   - output: 4×4×4×8bit 饱和截断结果
+   - output: 4×4×4×32bit Rescale 结果
+2. `conv_rescale_shift_stage`：量化流水第 2 级，对 Rescale 结果执行 ReLU 和饱和截断。
+   - input: 4×4×4×32bit Rescale 结果
+   - output: 4×4×4×8bit ReLU和饱和截断结果
 
 ### IV. RTL 阅读指导
 在阅读 conv 的 RTL 代码时，建议按照以下顺序：
@@ -153,5 +150,5 @@ conv_rescale_relu 内部包含三级流水线，分别对应三个计算模块�
 2. 阅读 `conv_shared_input_buffer.v`，理解输入缓存的双缓冲设计和 `pos_window_gen` 的窗口切出逻辑。
 3. 阅读 `conv_param_store.v` 以及 `conv_sram_sp.v`，理解权重和偏置的 bank 组织结构
 4. 阅读 `conv_core.v`（**核心**），理解 token 的发出逻辑，以及 conv_tile_mac 和 conv_rescale_relu 的调用关系。这个模块是整个第一层 Conv 子系统的计算和调度核心，它负责发出请求信号、地址，接受数据，执行卷积和量化计算。同 conv_subsystem.v 一样，不必先深究每个 wire 或 reg 的含义，简单理一理子模块连接关系，然后先看子模块。
-5. 阅读 `conv_tile_mac.v`，理解 `conv_core` 内部的 MAC 计算细节。这个模块是整个第一层 Conv 子系统的计算核心，它负责执行卷积计算，包含五级流水线：输入寄存、行乘、两级行归约、bias 加法。这个模块以及下属各个子模块，配合注释，理解起来很容易。
-6. 阅读 `conv_rescale_relu.v`，理解 `conv_core` 内部的量化激活计算细节。这个模块是整个第一层 Conv 子系统的量化激活核心，它负责执行量化和 ReLU，包含三级流水线：乘法、右移、饱和截断。同 `conv_tile_mac.v`，这个模块理解起来也很容易。
+5. 阅读 `conv_tile_mac.v`，理解 `conv_core` 内部的 MAC 计算细节。这个模块是整个第一层 Conv 子系统的计算核心，它负责执行卷积计算，包含三级流水线：输入寄存、行乘、求和。这个模块以及下属各个子模块，配合注释，理解起来很容易。
+6. 阅读 `conv_rescale_relu.v`，理解 `conv_core` 内部的量化激活计算细节。这个模块是整个第一层 Conv 子系统的量化激活核心，它负责执行量化和 ReLU，包含两级流水线：Rescale、ReLU+饱和截断。同 `conv_tile_mac.v`，这个模块理解起来也很容易。

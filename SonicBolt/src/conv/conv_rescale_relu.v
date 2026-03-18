@@ -4,7 +4,7 @@
  * 功能概述: 对 Conv1 的 4ch x 4x4 INT32 累加结果进行重量化、ReLU 和 INT8 饱和
  * 作者: SonicBolt 团队
  * 日期: 2026-03-15
- * 版本: v1.0
+ * 版本: v2.0
  *
  * 当前角色:
  *   - 主通路量化与激活模块。
@@ -16,15 +16,14 @@
  *   - 乘法级输出为 3072bit = 64 x 48bit
  *
  * 原有流水说明保留:
- *   - 第一级: INT32 x M0
- *   - 第二级: 舍入、算术右移、ReLU、饱和到 INT8
+ *   - 第一级: INT32 x M0，移位
+ *   - 第二级: ReLU、饱和到 INT8
  *
  * 更新说明:
  *   - 当前版本中，本模块主要负责流水级拼接，具体计算下沉到子模块。
- *   - 当前实际划分为 3 级:
- *       1. conv_rescale_mul_stage
- *       2. conv_rescale_shift_stage
- *       3. conv_relu_saturate_stage
+ *   - 当前实际划分为 2 级:
+ *       1. conv_rescale
+ *       2. conv_relu_saturate
  */
 module conv_rescale_relu #(
     parameter integer M0      = 111,
@@ -52,10 +51,8 @@ module conv_rescale_relu #(
     output wire [511:0]  out_data_bus     // 64 个 INT8 输出值
 );
 
-    // 3072 = 4 x 4 x 4 x 48 = 64 x 48
-    wire [3071:0] stage1_mult_bus;  // 第一级乘法结果，64 个 INT48
     // 2048 = 4 x 4 x 4 x 32
-    wire [2047:0] stage2_shift_bus; // 第二级右移结果，64 个 INT32
+    wire [2047:0] stage1_rescale_bus; // 第一级量化结果，64 个 INT32
 
     // stage1: 元数据的打拍输出
     wire stage1_valid;
@@ -69,25 +66,19 @@ module conv_rescale_relu #(
     wire [3:0] stage2_pos;
     wire [2:0] stage2_group;
 
-    // stage3: 元数据的打拍输出
-    wire stage3_valid;
-    wire stage3_last;
-    wire [3:0] stage3_pos;
-    wire [2:0] stage3_group;
-
     // ---------------------------------------------------------------------
     // ------------------------- 第一级流水：stage1 --------------------------
     // - 64 个 INT32 输入乘以 M0，得到 64 个 INT48 输出
     // - 元数据(valid, last, pos, group)打拍
     // ---------------------------------------------------------------------
     // stage1: 64 个 INT32 输入乘以 M0，得到 64 个 INT48 输出
-    conv_rescale_mul_stage #(
+    conv_rescale #(
         .M0(M0)
-    ) u_conv_rescale_mul_stage (
+    ) u_conv_rescale (
         .clk(clk),
         .rst_n(rst_n),
         .in_data_bus(in_data_bus),
-        .out_mult_bus(stage1_mult_bus)
+        .out_rescale_bus(stage1_rescale_bus)
     );
 
     // stage1: 元数据打拍
@@ -106,19 +97,18 @@ module conv_rescale_relu #(
         .out_group(stage1_group)
     );
 
+
     // ---------------------------------------------------------------------
     // ------------------------- 第二级流水：stage2 --------------------------
-    // - 64 个 INT48 进行移位
+    // - 64 个 INT32 进行 ReLU 和饱和截断
     // - 元数据(valid, last, pos, group)打拍
     // ---------------------------------------------------------------------
-    // stage2: 64 个 INT48 进行移位，得到 64 个 INT32 输出
-    conv_rescale_shift_stage #(
-        .SHIFT_N(SHIFT_N)
-    ) u_conv_rescale_shift_stage (
+    // stage2: 64 个 INT32 进行 ReLU 和 INT8 饱和阶段
+    conv_relu_saturate u_conv_relu_saturate (
         .clk(clk),
         .rst_n(rst_n),
-        .in_mult_bus(stage1_mult_bus),
-        .out_shift_bus(stage2_shift_bus)
+        .in_shift_bus(stage1_rescale_bus),
+        .out_data_bus(out_data_bus)
     );
 
     // stage2: 元数据打拍
@@ -135,36 +125,9 @@ module conv_rescale_relu #(
         .out_group(stage2_group)
     );
 
-    // ---------------------------------------------------------------------
-    // ------------------------- 第三级流水：stage3 --------------------------
-    // - 64 个 INT48 进行移位
-    // - 元数据(valid, last, pos, group)打拍
-    // ---------------------------------------------------------------------
-    // stage3: 64 个 INT32 进行 ReLU 和 INT8 饱和阶段
-    conv_relu_saturate_stage u_conv_relu_saturate_stage (
-        .clk(clk),
-        .rst_n(rst_n),
-        .in_shift_bus(stage2_shift_bus),
-        .out_data_bus(out_data_bus)
-    );
-
-    // stage3: 元数据打拍
-    conv_tile_mac_meta_pipe u_rescale_meta_pipe_stage3 (
-        .clk(clk),
-        .rst_n(rst_n),
-        .in_valid(stage2_valid),
-        .in_last(stage2_last),
-        .in_pos(stage2_pos),
-        .in_group(stage2_group),
-        .out_valid(stage3_valid),
-        .out_last(stage3_last),
-        .out_pos(stage3_pos),
-        .out_group(stage3_group)
-    );
-
-    assign out_valid = stage3_valid;
-    assign out_last  = stage3_last;
-    assign out_pos   = stage3_pos;
-    assign out_group = stage3_group;
+    assign out_valid = stage2_valid;
+    assign out_last  = stage2_last;
+    assign out_pos   = stage2_pos;
+    assign out_group = stage2_group;
 
 endmodule

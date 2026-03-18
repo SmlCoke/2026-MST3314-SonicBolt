@@ -6,9 +6,9 @@
  * 版本: v1.0
  * 
  * 功能概述:
- *   量化流水第 3 级，只负责 ReLU、饱和和 pack。
+ *   量化流水第 2 级，只负责 ReLU、饱和和 pack。
  */
-module conv_relu_saturate_stage (
+module conv_relu_saturate (
     input  wire          clk,           // 时钟
     input  wire          rst_n,         // 低有效复位
     input  wire [2047:0] in_shift_bus,  // 64 个 INT32 右移结果
