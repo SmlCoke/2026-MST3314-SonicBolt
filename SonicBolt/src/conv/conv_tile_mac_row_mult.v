@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_tile_mac_row_mult
  * 作者: SonicBolt 团队
- * 日期: 2026-03-16
- * 版本: v3.0
+ * 日期: 2026-03-18
+ * 版本: v4.0
  *
  * 功能概述:
  *   计算某一条预切分 kernel_row 对应的 7 项行内卷积和。
@@ -17,7 +17,7 @@
  * 位宽说明:
  *   - row_window_data : 4(oy) x 10(col) x 8bit = 320bit
  *   - weight_row_data : 4(ch) x 7(kx) x 8bit = 224bit
- *   - out_row_sum_bus : 4(ch) x 4 x 4 x INT32 = 2048bit
+ *   - out_row_sum_bus : 4(ch) x 4 x 4 x INT19 = 1216bit
  *
  * 设计说明:
  *   - 本级只处理 7 项乘法与行内加法树，不做跨 kernel_row 的累加。
@@ -26,6 +26,7 @@
  *   - v2.0 去掉了 in_val / wt_val / prod / sum 等中间变量，直接用一条表达式描述乘加树，
  *     让综合工具根据目标工艺自行推导乘法器和加法树结构。
  *   - v3.0 认为不需要在计算时对每个输入都拓展位宽，只需要保证 <= 左边的输出位宽就行。
+ *   - v4.0 分析得出，7组INT8的乘累加配合得到的最大位宽为 INT19，因此将输出位宽从 INT32 缩减到 INT19
  */
 module conv_tile_mac_row_mult (
     input  wire                clk,             // 时钟
@@ -34,7 +35,7 @@ module conv_tile_mac_row_mult (
     input  wire [4*7*8-1:0]    weight_row_data, // 当前 kernel_row
     
     // 对应的 4 通道权重行
-    output reg  [4*4*4*32-1:0] out_row_sum_bus  // 当前 kernel_row 的 64 个 INT32 行和
+    output reg  [4*4*4*19-1:0] out_row_sum_bus  // 当前 kernel_row 的 64 个 INT19 行和
 );
 
     integer ch_idx;  // 通道索引，范围 0..3
@@ -43,7 +44,7 @@ module conv_tile_mac_row_mult (
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            out_row_sum_bus <= {4*4*4*32{1'b0}};
+            out_row_sum_bus <= {4*4*4*19{1'b0}};
         end else begin
             for (ch_idx = 0; ch_idx < 4; ch_idx = ch_idx + 1) begin
                 for (oy_idx = 0; oy_idx < 4; oy_idx = oy_idx + 1) begin
@@ -52,7 +53,7 @@ module conv_tile_mac_row_mult (
                         // 输出填充：先按通道索引，每个通道16个结果；再按行索引，每行4个结果，一共4行，再按列索引。
                         // 数据选择：当前输入数据行：oy_idx，对应数据：i + oy_idx
                         // 权重选择：第 ch_idx 个通道。
-                        out_row_sum_bus[((ch_idx * 16 + oy_idx * 4 + ox_idx) * 32) +: 32] <=
+                        out_row_sum_bus[((ch_idx * 16 + oy_idx * 4 + ox_idx) * 19) +: 19] <=
                             ($signed(row_window_data[(oy_idx * 10 + ox_idx + 0) * 8 +: 8]) *
                             $signed(weight_row_data[(ch_idx * 56) + (0 * 8) +: 8])) +
                             ($signed(row_window_data[(oy_idx * 10 + ox_idx + 1) * 8 +: 8]) *
@@ -74,6 +75,7 @@ module conv_tile_mac_row_mult (
     end
 
 endmodule
+
 
 // `timescale 1ns / 1ps
 // /*

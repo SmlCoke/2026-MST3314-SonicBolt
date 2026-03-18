@@ -59,7 +59,7 @@ TILE_HEX_LEN = 128   # 512bit tile 对应 128 个十六进制字符
 # testbench 中每个 tile 的打印格式：
 #   TILE sample=<n> pos=<p> group=<g> data=<hex>
 TILE_RE = re.compile(
-    r"^TILE sample=(?P<sample>\d+) pos=(?P<pos>\d+) group=(?P<group>\d+) data=(?P<data>[0-9a-fA-F]+)$"
+    r"^TILE sample=(?P<sample>\d+) pos=(?P<pos>\d+) group=(?P<group>\d+) data=(?P<data>[0-9a-fA-FxXzZ]+)$"
 )
 # ^ 和 $ 确保整行完全匹配，避免误匹配其他日志行
 # (?P<name>...) 是命名捕获组，方便后续直接通过 groupdict() 获取 pos/group/data 等字段
@@ -211,6 +211,12 @@ def parse_sim_tiles(log_path: Path) -> Dict[Tuple[int, int], str]:
     return parsed
 
 
+def tile_has_unknown(tile_hex: str) -> bool:
+    """检查 tile 字符串是否仍包含 X/Z 未知态。"""
+    lowered = tile_hex.lower()
+    return ("x" in lowered) or ("z" in lowered)
+
+
 def run_single_sample(vvp_path: Path, sample_id: int, enable_wave: bool) -> Tuple[Path, Dict[Tuple[int, int], str]]:
     """
     运行一个样本的仿真。
@@ -268,6 +274,12 @@ def compare_sample(sample_id: int, sim_tiles: Dict[Tuple[int, int], str]) -> Lis
                 mismatches.append(f"sample {sample_id}: missing tile pos={pos} group={group}")
             elif golden_value is None:
                 mismatches.append(f"sample {sample_id}: golden missing pos={pos} group={group}")
+            elif tile_has_unknown(sim_value):
+                mismatches.append(
+                    f"sample {sample_id}: unknown tile pos={pos} group={group}\n"
+                    f"  sim   = {sim_value}\n"
+                    f"  golden= {golden_value}"
+                )
             elif sim_value != golden_value:
                 mismatches.append(
                     f"sample {sample_id}: mismatch pos={pos} group={group}\n"

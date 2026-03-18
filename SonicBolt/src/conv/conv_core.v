@@ -146,7 +146,7 @@ module conv_core #(
         end
     end
 
-    // tile_mac 模块内置 5 级流水线
+    // tile_mac 模块内置 4 级流水线
     conv_tile_mac u_conv_tile_mac (
         .clk(clk),
         .rst_n(rst_n),
