@@ -1,5 +1,7 @@
 ﻿# Conv 子系统架构说明
 
+> 当前系统所属版本：SonicBolt v2.0
+
 ## I. 整体架构
 
 本子系统实现 CNN 加速器中的第一层核心计算层：标准卷积。
@@ -46,14 +48,12 @@ Conv 层在计算时，首先固定 pos，然后每个时钟上升沿更新 grou
 当前 `SonicBolt/src/conv` 目录中，主通路模块如下：
 
 1. `conv_subsystem.v`：**顶层模块**，连接输入缓存、参数 SRAM 和计算核心。
-2. `conv_param_store.v`：**片上 SRAM 封装**，保存 Conv 整层全部权重和全部偏置，向 `conv_core` 按 group 提供当前 token 需要的参数切片
-3. `conv_shared_input_buffer.v`：**输入缓存**，管理输入图像的双缓冲 shadow cache，对计算核心输出 `14x10` 输入窗口
-4. `conv_pos_window_gen.v`：**窗口生成器**，根据 `pos` 从输入图中切出 `14x10` 窗口，纯组合逻辑实现。
-5. `conv_core.v`：**计算核心**，按 `{pos, group}` 发出 token，驱动 MAC 与量化链路
-6. `conv_tile_mac.v`：**MAC 核心**，计算一个完整 `4(ch) x 4(row) x 4(col)` INT32 tile，下属各级流水线多个模块。
-7. `conv_rescale_relu.v`：**量化激活模块**，对 64 个 `INT32` 结果做统一量化和 ReLU，下属各级流水线多个模块。
-8. `conv_sram_sp.v`：**SRAM 行为模型**，实现单端口 SRAM 的读写行为，**仅供仿真使用**。
-
+2. `conv_param_store.v`：**片上 SRAM 封装**，保存 Conv 整层全部权重和全部偏置，向 `conv_core` 提供当前 token 需要的 `11` 条 kernel row 和 bias。
+3. `conv_shared_input_buffer.v`：**输入缓存**，使用双 bank SRAM 保存完整输入图，并维护当前 `pos` 对应的 `14` 行工作集（Register）。
+4. `conv_core.v`：**计算核心**，按 `{pos, group}` 发出 token，驱动输入工作集切换、参数读取、MAC 与量化链路。
+5. `conv_tile_mac.v`：**MAC 核心**，基于 `11` 级 `row PE` 串接，计算一个完整 `4(ch) x 4(row) x 4(col)` INT32 tile。
+6. `conv_rescale_relu.v`：**量化激活模块**，对 64 个 `INT32` 结果做统一量化和 ReLU，下属各级流水线多个模块。
+7. `conv_sram_sp.v`：**SRAM 行为模型**，实现单端口 SRAM 的读写行为，**仅供仿真使用**。
 
 ### 3.2 顶层模块：conv_subsystem
 
@@ -73,9 +73,22 @@ Conv 层在计算时，首先固定 pos，然后每个时钟上升沿更新 grou
 
 当前 Conv 输入图为： $30 \times 10 \times 8\text{bit}$ ，整帧总数据量为： $30 \times 10 \times 8 = 2400\text{bit}$
 
-当前版本直接在 `conv_shared_input_buffer` 内维护两份整帧双缓冲 cache：`frame_cache0` 和 `frame_cache1`，它们分别对应系统语义上的：`ping`和`pong`
+当前版本的 `conv_shared_input_buffer` 不再使用整帧寄存器双缓冲，而是采用：
+
+- 两个 $30 \times 80\text{bit}$ 的单端口 SRAM bank，分别作为 ping / pong 输入帧存储
+- 两组 `shadow cache`，只镜像每个 bank 的前 `14` 行，用于快速建立 `pos=0` 的首个工作集
+- 一份当前工作集 `pos_row_data_bus`，保存当前 `pos` 对应的 `14` 行输入
+- 一组两行的预取缓存 `prefetched_rows`，用于在当前 `pos` 计算期间预取下一个 `pos` 需要新增的两行
 
 通过 `active_buf_sel` 选择当前哪一帧参与计算，另一帧则可继续被外部写入。
+
+输入缓存的工作方式如下：
+
+1. `start_consume` 到来后，选择当前 active bank
+2. 当 `conv_core` 第一次请求 `pos=0` 时，直接从对应 `shadow cache` 一次性装入 `14` 行工作集
+3. 同一个 `pos` 的 `8` 个 group` **共用同一份工作集**
+4. 在消费当前 `pos` 的同时，通过 `consume_tick` **驱动后台预取两条新行**
+5. 当请求 `pos+1` 时，把工作集上移 `2` 行，并把两条预取行补到末尾
 
 
 ### 3.4 权重与偏置组织：conv_param_store
@@ -93,7 +106,10 @@ bank 编号规则为： $\text{bank} = \text{kernel-row}$
 
 所以对于一个固定 $\text{group}$ ，11 个 bank 同时读出后，可以拼成完整的： $4 \times 11 \times 7 \times 8\text{bit} = 2464\text{bit}$
 
-这正是 `conv_tile_mac` 的权重输入总线宽度。
+在当前实现中，这组数据不再命名为统一的 `weight_data_bus`，而是通过展平后的 `weight_row_data_bus` 传给 `conv_tile_mac`，其中：
+
+- `weight_row_data_bus[i*224 +: 224]` 对应第 `i` 条 kernel row
+- 每条切片内部保存 `4` 个输出通道在该 kernel row 上的 `7` 个 INT8 权重
 
 #### 3.4.2 bias bank
 bias 采用 1 个 bank：每个 bank $8(\text{depth})\times 64\text{bit(word)}$
@@ -114,7 +130,14 @@ bias 采用 1 个 bank：每个 bank $8(\text{depth})\times 64\text{bit(word)}$
 conv_core 的主要功能是根据当前的 pos 和 group **发出请求信号、参数地址**，然后**接收**输入缓存和 SRAM 传回的**数据和参数(Token)**，**驱动 MAC 与量化链路**。
 
 #### 3.5.1 交互接口
-conv_core 与 conv_shared_input_buffer 以及 conv_param_store 之间的接口为总线直连，conv_core 在一个时钟上升沿直接发出地址和请求信号，等待数据和参数返回，下一个时钟上升沿就能得到完整的 token。
+`conv_core` 与 `conv_shared_input_buffer` 以及 `conv_param_store` 之间的接口为总线直连。
+
+当前版本的接口语义已经调整为：
+
+- `conv_core` 不再每拍都请求一个新的 `14x10` 窗口，而是只在初始化和 `pos` 边界请求工作集更新
+- 输入缓存向 `conv_core` 返回展平后的 `pos_window_data = 14 x 80bit`
+- 参数存储向 `conv_core` 返回展平后的 `weight_data_bus = 11 x 224bit` 和 `bias_data_bus = 64bit`
+- `conv_core` 通过 `consume_tick` 通知输入缓存：当前 token 已被真正消费，可以继续推动后台预取
 
 #### 3.5.2 MAC 单元
 
@@ -147,7 +170,7 @@ conv_rescale_relu 内部包含两级流水线，分别对应两个计算模块�
 ### IV. RTL 阅读指导
 在阅读 conv 的 RTL 代码时，建议按照以下顺序：
 1. 从顶层 `conv_subsystem.v` 开始，理清各个模块之间的连接关系和数据流向。**此时不必太在意每个 wire 或者 reg 的具体含义以及生命周期，遇到不懂的，先看子模块**。
-2. 阅读 `conv_shared_input_buffer.v`，理解输入缓存的双缓冲设计和 `pos_window_gen` 的窗口切出逻辑。
+2. 阅读 `conv_shared_input_buffer.v`，理解输入双 bank SRAM、`shadow cache`、14 行工作集和两行预取的交互方式。
 3. 阅读 `conv_param_store.v` 以及 `conv_sram_sp.v`，理解权重和偏置的 bank 组织结构
 4. 阅读 `conv_core.v`（**核心**），理解 token 的发出逻辑，以及 conv_tile_mac 和 conv_rescale_relu 的调用关系。这个模块是整个第一层 Conv 子系统的计算和调度核心，它负责发出请求信号、地址，接受数据，执行卷积和量化计算。同 conv_subsystem.v 一样，不必先深究每个 wire 或 reg 的含义，简单理一理子模块连接关系，然后先看子模块。
 5. 阅读 `conv_tile_mac.v`，理解 `conv_core` 内部的 MAC 计算细节。这个模块是整个第一层 Conv 子系统的计算核心，它负责执行卷积计算，包含三级流水线：输入寄存、行乘、求和。这个模块以及下属各个子模块，配合注释，理解起来很容易。

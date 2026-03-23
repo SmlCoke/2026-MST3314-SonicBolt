@@ -1,13 +1,20 @@
-# 2026-MSST3314-SonicBolt
+<div align="center">
 
-> 数字集成电路设计课程设计 · 高性能 CNN 加速器全流程设计
-> 工艺：0.18 μm · 目标：Speed ≥ 1000K frames/s · 评价指标：FoM = Speed / Area
+# ⚡️SonicBolt(声速闪电)
+**数字集成电路设计 · 高性能 CNN 加速器全流程设计**
+
+[![Version](https://img.shields.io/badge/Version-v2.0-blue.svg)]() [![Institution](https://img.shields.io/badge/Institution-SJTU-red.svg)](https://www.sjtu.edu.cn/) [![SmlCoke](https://img.shields.io/badge/SmlCoke-https://smlcoke.com-brightgreen.svg)](https://smlcoke.com) [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+
+[项目简介](#i-项目简介) • [仓库结构](#ii-仓库结构) • [各模块说明](#iii-各模块说明) • [设计进度](#iv-设计进度)
+
+</div>
 
 ---
 
+
 ## I. 项目简介
 
-本项目为 SJTU MAST3314《数字集成电路设计课程设计》课程的完整设计仓库，目标是完成一款面向**语音关键词识别**的 CNN 加速器芯片全流程设计，覆盖架构设计、RTL 编码、逻辑仿真、逻辑综合、时序分析与物理设计。
+SonicBolt(声速闪电)项目为 SJTU MAST3314《数字集成电路设计课程设计》课程的完整设计仓库，目标是完成一款面向**语音关键词识别**的 CNN 加速器芯片全流程设计，采用工艺：0.18 μm ，预估实现目标：Speed ≥ 1000K frames/s ，评价指标：FoM = Speed / Area。覆盖架构设计、RTL 编码、逻辑仿真、逻辑综合、时序分析与物理设计。
 
 **网络结构（MobileNet v2 简化版）**：
 
@@ -61,8 +68,9 @@ CNN-Accelerator/
 │
 └── SonicBolt/                  # ★ RTL 实现（本团队编写）
     ├── data/                   # 测试数据和网络参数，供仿真使用
+    ├── docs/                   # 设计文档、模块说明、架构示意图等 
     └── src/
-        ├── conv/              # Conv 层 RTL 实现
+        ├── conv/               # Conv 层 RTL 实现
 ```
 
 
@@ -121,13 +129,15 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 
 ---
 
-### 3.5 `SonicBolt/` — Verilog RTL 实现（待补充）
+### 3.5 `SonicBolt/` — Verilog RTL 实现（待完善）
 
 本团队针对**高性能场景**设计的 Verilog 实现，目标：
 
 - 每秒处理 ≥ 1000K 帧 `(1,30,10)` 输入
 - 评价指标：FoM = Speed / Area（面效）
 - 设计方向：提升 MAC 并行度 + 流水线深度
+
+架构示意图可以参照 [figures.pptx](./SonicBolt/docs/figures.pptx) ，其中涵盖了各个版本的电路架构示意图以及时序分析图，供设计参考。
 
 ---
 
@@ -137,7 +147,7 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 |---|---|---|
 | 架构研究 | 阅读规范、建立 Python 行为模型 | ✅ 完成 |
 | RTL 设计 | Verilog 模块编写（SonicBolt） | 🔲 进行中 |
-| 逻辑仿真 | Testbench 编写与功能验证 | 🔲 待开始 |
+| 逻辑仿真 | Testbench 编写与功能验证 | 🔲 进行中 |
 | 逻辑综合 | Design Compiler，时序/面积/功耗分析 | 🔲 待开始 |
 | 时序分析 | PrimeTime 时序签核 | 🔲 待开始 |
 | 物理设计 | ICC/Encounter 布局布线，后仿真 | 🔲 待开始 |

@@ -98,6 +98,7 @@ module conv_tile_mac (
     wire [3:0]          stage2_pos;
     wire [2:0]          stage2_group;
 
+    // ---------- stage3: 行归一结果 ---------
     wire                stage3_valid;
     wire                stage3_last;
     wire [3:0]          stage3_pos;

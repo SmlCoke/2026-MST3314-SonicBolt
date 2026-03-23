@@ -1,10 +1,12 @@
 `timescale 1ns / 1ps
 /*
  * 模块名称: conv_rescale_relu
- * 功能概述: 对 Conv1 的 4ch x 4x4 INT32 累加结果进行重量化、ReLU 和 INT8 饱和
  * 作者: SonicBolt 团队
  * 日期: 2026-03-15
  * 版本: v2.0
+ *
+ * 功能概述: 
+ *   对 Conv1 的 4ch x 4x4 INT32 累加结果进行重量化、ReLU 和 INT8 饱和
  *
  * 当前角色:
  *   - 主通路量化与激活模块。

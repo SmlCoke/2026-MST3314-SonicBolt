@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 /*
  * 模块名称: conv_relu_saturate_stage
-* 作者: SonicBolt 团队
+ * 作者: SonicBolt 团队
  * 日期: 2026-03-15
  * 版本: v1.0
  * 

@@ -1,24 +1,29 @@
 `timescale 1ns / 1ps
 /*
  * 模块名称: conv_subsystem
- * 功能概述: 基于 pos-major 数据流的 Conv 子系统顶层
  * 作者: SonicBolt 团队
- * 日期: 2026-03-15
- * 版本: v1.0
+ * 日期: 2026-03-19
+ * 版本: v2.0
+ *
+ * 功能概述: 基于 pos-major 数据流的 Conv 子系统顶层
  *
  * 设计定位:
  *   - 当前只实现 Conv 层，但参数存储语义已经固定为“层内完整参数 SRAM”。
  *   - 本模块内部保存的是 Conv 整层的全部权重和全部偏置，不是“当前这次推理临时需要的参数”。
  *   - 后续 DWConv / PWConv / FC / PostProcess 也应遵循同样原则，在各自层模块内部保存本层全部参数。
+ *   - 相比 v1.0 版本，当前顶层为“双 SRAM 缓存完整输入 + 双 reg 缓存 window + conv_core 控制预取”主通路。
  *
  * 主数据流:
  *   输入图像 -> conv_shared_input_buffer -> conv_core -> out_stream_*
  *
+ * 当前实现要点:
+ *   - 输入侧采用双 bank SRAM 保存完整 30x10 输入图。
+ *   - `consume_tick` 从 conv_core 返回给输入缓存，用来驱动下一 pos 的后台预取。
  *
  * 参数存储:
  *   - 由独立的 conv_param_store 管理 Conv 整层参数。
- *   - 当前组织为 11 个 weight bank + 1 个 bias bank。
- *   - 运行时只按 group 读取其中一部分切片。
+  *   - 当前组织为 11 个 weight bank + 1 个 bias bank。
+  *   - 运行时只按 group 读取其中一部分切片。
  */
 module conv_subsystem #(
     parameter integer M0      = 111,
@@ -56,35 +61,41 @@ module conv_subsystem #(
     output wire [3:0]    out_stream_pos,   // 输出 tile 的 pos 编号
     output wire [2:0]    out_stream_group, // 输出 tile 的 group 编号
     output wire [511:0]  out_stream_data   // 输出 tile 数据，4 x 4 x 4 x 8bit = 512bit
-
 );
 
-    wire          active_buf_sel;   // 当前正在被主通路消费的输入图编号
-    wire          pos_req_valid;    // 下游请求一个新的 pos 窗口
-    wire [3:0]    pos_req_pos;      // 请求的 pos 编号
-    wire          pos_window_valid; // 输出窗口有效
-    wire [1119:0] pos_window_data;  // 返回的 14x10 窗口，14 x 10 x 8bit = 1120bit
+    wire          active_buf_sel;          // 当前正在被主通路消费的输入图编号
+    wire          pos_req_valid;           // 下游请求一个新的 pos 窗口
+    wire [3:0]    pos_req_pos;             // 请求的 pos 编号
+    wire          pos_window_valid;        // 输出窗口有效
+    wire          consume_tick;            // conv_core 告诉输入缓存“当前 token 已被真正消费”
+    wire [14*80-1:0] pos_window_data;      // 返回的 14x10 工作集，按 14 个 80bit 行展平
 
-    wire          weight_store_wr_en; // 权重 SRAM 写使能
-    wire          bias_store_wr_en;   // 偏置 SRAM 写使能
+    wire          weight_store_wr_en;      // 权重 SRAM 写使能 
+    wire          bias_store_wr_en;        // 偏置 SRAM 写使能 
 
-    wire          weight_rd_en;       // 权重 SRAM 读使能
-    wire [2:0]    weight_rd_group;    // 权重 SRAM 读地址
+    wire          weight_rd_en;            // 权重 SRAM 读使能    
+    wire [2:0]    weight_rd_group;         // 权重 SRAM 读地址    
 
-    wire          bias_rd_en;         // 偏置 SRAM 读使能
-    wire [2:0]    bias_rd_group;      // 偏置 SRAM 读地址
+    wire          bias_rd_en;              // 偏置 SRAM 读使能 
+    wire [2:0]    bias_rd_group;           // 偏置 SRAM 读地址    
 
-    wire [2463:0] weight_data_bus;    // 权重 SRAM 读出数据总线
-    wire [63:0]   bias_data_bus;      // 偏置 SRAM 读出数据总线
+    wire [11*224-1:0] weight_data_bus; // 11 条 kernel row，按 11 个 224bit 切片展平
+    wire [63:0]   bias_data_bus;           // 偏置 SRAM 读出数据总线
 
-    wire          tile_valid_int;     // Conv 输出元数据：有效
-    wire [3:0]    tile_pos_int;       // Conv 输出元数据：位置
-    wire [2:0]    tile_group_int;     // Conv 输出元数据：通道组
-    wire [511:0]  tile_data_int;      // Conv 输出数据：量化后的 tile 数据
+    wire          tile_valid_int;          // Conv 输出元数据：有效  
+    wire [3:0]    tile_pos_int;            // Conv 输出元数据：位置
+    wire [2:0]    tile_group_int;          // Conv 输出元数据：通道组  
+    wire [511:0]  tile_data_int;           // Conv 输出数据：量化后的 tile 数据 
 
+    // 忙于计算当前图时，禁止覆盖本层参数 SRAM。
+    // 在当前架构中，参数 SRAM 的写入只会出现在第一张图开始计算前，因此不存在这个担心
     assign weight_store_wr_en = weight_wr_en && !busy;
     assign bias_store_wr_en   = bias_wr_en && !busy;
 
+    // 输入缓存模块：
+    // - 保存双 bank 输入图
+    // - 维护当前 pos 的 14 行工作集
+    // - 在 consume_tick 驱动下后台预取下一 pos 需要的两条新行
     conv_shared_input_buffer u_conv_shared_input_buffer (
         .clk(clk),
         .rst_n(rst_n),
@@ -104,10 +115,14 @@ module conv_subsystem #(
         // ---------- pos 窗口请求 / 返回接口 ----------
         .pos_req_valid(pos_req_valid),       // in: 下游请求一个新的 pos 窗口
         .pos_req_pos(pos_req_pos),           // in: 请求的 pos 编号，范围 0~8，因此使用 4bit
+        .consume_tick(consume_tick),
         .pos_window_valid(pos_window_valid), // out: 输出窗口有效
-        .pos_window_data(pos_window_data)    // out: 返回的 14x10 窗口，14 x 10 x 8bit = 1120bit
+        .pos_window_data(pos_window_data)  // out: 返回的 14x10 窗口
     );
 
+    // 参数存储模块：
+    // - 保存 Conv1 整层 11 个 kernel row bank + 1 个 bias bank
+    // - 运行时按 group 输出本 token 所需参数切片
     conv_param_store u_conv_param_store (
         .clk(clk),
         .rst_n(rst_n),
@@ -133,10 +148,13 @@ module conv_subsystem #(
         .bias_rd_group(bias_rd_group),      // in: 读取哪个 group 的偏置，地址范围 0..7
 
         // ------------ SRAM 读出数据总线 ------------
-        .weight_data_bus(weight_data_bus),  // out: 4个卷积核：4 x 11 x 7 x 8bit = 2464bit
+        .weight_data_bus(weight_data_bus),  // out: 4个卷积核：4 x 11 x 7 x 8bit = 2464bit     
         .bias_data_bus(bias_data_bus)       // out: 4个偏置：4 x 16 = 64bit
     );
 
+    // 计算核心模块：
+    // - 负责 pos/group token 调度
+    // - 负责驱动 MAC 与量化输出链
     conv_core #(
         .M0(M0),
         .SHIFT_N(SHIFT_N)
@@ -150,15 +168,16 @@ module conv_subsystem #(
         // ---------- 输入图像交互接口 ----------
         .pos_req_valid(pos_req_valid),        // out: 向输入缓存请求一个新的 pos 窗口
         .pos_req_pos(pos_req_pos),            // out: 请求的 pos 编号，范围 0~8，因此使用 4bit
+        .consume_tick(consume_tick),
         .pos_window_valid(pos_window_valid),  // in: 输出窗口有效
-        .pos_window_data(pos_window_data),    // in: 返回的 14x10 窗口，14 x 10 x 8bit = 1120bit
+        .pos_window_data(pos_window_data),  // in: 返回的 14x10 窗口，14 x 10 x 8bit = 1120bit
 
         // ---------- 权重/偏置交互接口 ----------
         .weight_rd_en(weight_rd_en),          // out: Conv 权重 SRAM 读使能
         .weight_rd_group(weight_rd_group),    // out: 读取哪个 group 的权重
         .bias_rd_en(bias_rd_en),              // out: Conv 偏置 SRAM 读使能
         .bias_rd_group(bias_rd_group),        // out: 读取哪个 group 的偏置
-        .weight_data_bus(weight_data_bus),    // in: 权重 SRAM 读出数据总线
+        .weight_data_bus(weight_data_bus),  // in: 权重 SRAM 读出数据总线
         .bias_data_bus(bias_data_bus),        // in: 偏置 SRAM 读出数据总线
 
         // ---------- 输出数据流接口 ----------
@@ -169,7 +188,6 @@ module conv_subsystem #(
         .out_stream_data(tile_data_int)        // out: 输出数据：量化后的 tile 数据
     );
 
-    // 
     assign out_stream_valid = tile_valid_int;
     assign out_stream_pos   = tile_pos_int;
     assign out_stream_group = tile_group_int;
