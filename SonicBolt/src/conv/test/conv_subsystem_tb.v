@@ -4,7 +4,7 @@
  * 模块名称: conv_subsystem_tb
  * 作者: SonicBolt 团队
  * 日期: 2026-03-19
- * 版本: v2.2
+ * 版本: v2.3
  *
  * 功能概述:
  *   面向当前 conv_subsystem 的自检 testbench。
@@ -17,8 +17,7 @@
  * 当前版本说明:
  *   - 当前 Conv1 采用 `9 个 pos x 8 个 group = 72 个 token`
  *   - 每个 token 对应一个 `4ch x 4x4 x 8bit = 512bit` 输出 tile
- *   - testbench 会在计算当前样本时，并行向另一个输入 bank 装载同一张图，
- *     用来验证输入双缓冲和 bank overlap 语义
+ *   - 当前 testbench 采用单帧缓存流程：先装载完整输入图，再启动计算
  *
  * 日志格式:
  *   - 每个有效 tile 输出一行：
@@ -32,23 +31,21 @@ module conv_subsystem_tb #(
 ) ();
 
     // 基本仿真参数。
-    localparam integer CLK_HALF_PERIOD  = 5;
-    localparam integer INPUT_ROW_COUNT  = 30;
+    localparam integer CLK_HALF_PERIOD   = 5;
+    localparam integer INPUT_ROW_COUNT   = 30;
     localparam integer WEIGHT_WORD_COUNT = 88;
-    localparam integer BIAS_WORD_COUNT  = 8;
-    localparam integer TOKEN_COUNT      = 72;
+    localparam integer BIAS_WORD_COUNT   = 8;
+    localparam integer TOKEN_COUNT       = 72;
 
     // DUT 顶层控制与状态信号。
     reg clk;
     reg rst_n;
     reg start;
-    reg start_buf_sel;
     wire busy;
     wire done;
 
     // 输入图写口：逐行写入 30x10 输入图，每行 80bit。
     reg img_wr_en;
-    reg img_wr_buf_sel;
     reg [4:0] img_wr_addr;
     reg [39:0] img_wr_data_lo;
     reg [39:0] img_wr_data_hi;
@@ -102,11 +99,9 @@ module conv_subsystem_tb #(
         .clk(clk),
         .rst_n(rst_n),
         .start(start),
-        .start_buf_sel(start_buf_sel),
         .busy(busy),
         .done(done),
         .img_wr_en(img_wr_en),
-        .img_wr_buf_sel(img_wr_buf_sel),
         .img_wr_addr(img_wr_addr),
         .img_wr_data_lo(img_wr_data_lo),
         .img_wr_data_hi(img_wr_data_hi),
@@ -125,7 +120,7 @@ module conv_subsystem_tb #(
         .out_stream_data(out_stream_data)
     );
 
-    // 时钟翻转逻辑：每半周期翻转一次。
+    // 生成时钟，默认 10ns 一个周期。
     always #(CLK_HALF_PERIOD) clk = ~clk;
 
     // 初始化所有驱动信号和统计变量。
@@ -134,9 +129,7 @@ module conv_subsystem_tb #(
             clk = 1'b0;
             rst_n = 1'b0;
             start = 1'b0;
-            start_buf_sel = 1'b0;
             img_wr_en = 1'b0;
-            img_wr_buf_sel = 1'b0;
             img_wr_addr = 5'd0;
             img_wr_data_lo = 40'd0;
             img_wr_data_hi = 40'd0;
@@ -243,35 +236,31 @@ module conv_subsystem_tb #(
         end
     endtask
 
-    // 逐行把当前样本装载到指定输入 bank。
-    task automatic load_input_sample_to_buffer;
-        input buffer_sel;
+    // 把当前样本的 30 行输入图完整写入单帧 SRAM。
+    task automatic load_input_sample;
         reg [79:0] row_word;
         begin
             for (row_idx = 0; row_idx < INPUT_ROW_COUNT; row_idx = row_idx + 1) begin
                 row_word = input_rows_mem[row_idx];
                 @(posedge clk);
                 img_wr_en <= 1'b1;
-                img_wr_buf_sel <= buffer_sel;
                 img_wr_addr <= row_idx[4:0];
                 img_wr_data_lo <= row_word[39:0];
                 img_wr_data_hi <= row_word[79:40];
             end
             @(posedge clk);
             img_wr_en <= 1'b0;
-            img_wr_buf_sel <= 1'b0;
             img_wr_addr <= 5'd0;
             img_wr_data_lo <= 40'd0;
             img_wr_data_hi <= 40'd0;
         end
     endtask
 
-    // 拉高 start 一个周期，启动一次计算。
+    // 拉高 start 一个时钟周期，启动一次新图计算。
     task automatic start_run;
         begin
             @(posedge clk);
             start <= 1'b1;
-            start_buf_sel <= 1'b0;
             @(posedge clk);
             start <= 1'b0;
         end
@@ -291,7 +280,7 @@ module conv_subsystem_tb #(
         end
     endtask
 
-    // 在线统计输出 token，并检查流中断。
+    // 统计输出 token，并检查输出流中途是否出现断流。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             cycle_counter <= 0;
@@ -312,14 +301,12 @@ module conv_subsystem_tb #(
     end
 
     // 主测试流程：
-    // 1. 初始化和解析 plusargs
-    // 2. 读入 mem 文件
+    // 1. 解析仿真 plusargs
+    // 2. 从 mem 文件加载样本
     // 3. 复位 DUT
     // 4. 装载权重 / 偏置 / 输入图
-    // 5. 启动运行
-    // 6. 并行做两件事：
-    //    - 向另一个输入 bank 装载同一张图，验证 overlap
-    //    - 等待计算完成
+    // 5. 启动计算
+    // 6. 等待完成
     // 7. 检查 tile 数和 stream gap
     initial begin
         init_signals();
@@ -334,13 +321,9 @@ module conv_subsystem_tb #(
         apply_reset();
         load_weights();
         load_bias();
-        load_input_sample_to_buffer(1'b0);
+        load_input_sample();
         start_run();
-
-        fork
-            load_input_sample_to_buffer(1'b1);
-            wait_done_or_timeout();
-        join
+        wait_done_or_timeout();
 
         if (tile_counter !== TOKEN_COUNT) begin
             $display("TB_ERROR tile_count sample=%0d got=%0d expected=%0d",

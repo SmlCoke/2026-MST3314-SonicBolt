@@ -3,21 +3,21 @@
  * 模块名称: conv_subsystem
  * 作者: SonicBolt 团队
  * 日期: 2026-03-19
- * 版本: v2.0
+ * 版本: v2.1
  *
  * 功能概述: 基于 pos-major 数据流的 Conv 子系统顶层
  *
- * 设计定位:
+ * 版本定位:
  *   - 当前只实现 Conv 层，但参数存储语义已经固定为“层内完整参数 SRAM”。
  *   - 本模块内部保存的是 Conv 整层的全部权重和全部偏置，不是“当前这次推理临时需要的参数”。
- *   - 后续 DWConv / PWConv / FC / PostProcess 也应遵循同样原则，在各自层模块内部保存本层全部参数。
- *   - 相比 v1.0 版本，当前顶层为“双 SRAM 缓存完整输入 + 双 reg 缓存 window + conv_core 控制预取”主通路。
+ *   - 当前版本输入侧改为单帧缓存，不再保留双 bank ping-pong 输入缓冲
+ *   - 相比 v2.0 版本，当前顶层为“单 SRAM 缓存完整输入 + 单 reg 缓存 window + conv_core 控制预取”主通路。
  *
  * 主数据流:
  *   输入图像 -> conv_shared_input_buffer -> conv_core -> out_stream_*
  *
  * 当前实现要点:
- *   - 输入侧采用双 bank SRAM 保存完整 30x10 输入图。
+ *   - 输入侧采用单口 SRAM 保存完整 30x10 输入图
  *   - `consume_tick` 从 conv_core 返回给输入缓存，用来驱动下一 pos 的后台预取。
  *
  * 参数存储:
@@ -32,13 +32,11 @@ module conv_subsystem #(
     input  wire          clk,              // 时钟
     input  wire          rst_n,            // 低有效复位
     input  wire          start,            // 启动一次新图计算
-    input  wire          start_buf_sel,    // 本次计算使用哪个输入 buffer
     output wire          busy,             // 高电平表示 Conv 正在处理当前图
     output wire          done,             // 单拍完成脉冲
 
     // ------------ 输入图像写控制信号 ------------
     input  wire          img_wr_en,        // 输入图像写使能
-    input  wire          img_wr_buf_sel,   // 输入图像写入哪个 buffer
     input  wire [4:0]    img_wr_addr,      // 输入图像行地址，30 行因此使用 5bit
     input  wire [39:0]   img_wr_data_lo,   // 一行的低半部分，5 个 INT8 = 40bit
     input  wire [39:0]   img_wr_data_hi,   // 一行的高半部分，5 个 INT8 = 40bit
@@ -63,10 +61,9 @@ module conv_subsystem #(
     output wire [511:0]  out_stream_data   // 输出 tile 数据，4 x 4 x 4 x 8bit = 512bit
 );
 
-    wire          active_buf_sel;          // 当前正在被主通路消费的输入图编号
     wire          pos_req_valid;           // 下游请求一个新的 pos 窗口
     wire [3:0]    pos_req_pos;             // 请求的 pos 编号
-    wire          pos_window_valid;        // 输出窗口有效
+    wire          pos_window_valid;        // 输入窗口有效
     wire          consume_tick;            // conv_core 告诉输入缓存“当前 token 已被真正消费”
     wire [14*80-1:0] pos_window_data;      // 返回的 14x10 工作集，按 14 个 80bit 行展平
 
@@ -88,12 +85,11 @@ module conv_subsystem #(
     wire [511:0]  tile_data_int;           // Conv 输出数据：量化后的 tile 数据 
 
     // 忙于计算当前图时，禁止覆盖本层参数 SRAM。
-    // 在当前架构中，参数 SRAM 的写入只会出现在第一张图开始计算前，因此不存在这个担心
     assign weight_store_wr_en = weight_wr_en && !busy;
     assign bias_store_wr_en   = bias_wr_en && !busy;
 
     // 输入缓存模块：
-    // - 保存双 bank 输入图
+    // - 保存输入图
     // - 维护当前 pos 的 14 行工作集
     // - 在 consume_tick 驱动下后台预取下一 pos 需要的两条新行
     conv_shared_input_buffer u_conv_shared_input_buffer (
@@ -102,40 +98,37 @@ module conv_subsystem #(
 
         // ---------- 输入图写入接口 ----------
         .img_wr_en(img_wr_en),               // in: 输入图逐行写使能
-        .img_wr_buf_sel(img_wr_buf_sel),     // in: 写入哪一份双缓冲寄存器
         .img_wr_addr(img_wr_addr),           // in: 写入行地址，范围
         .img_wr_data_lo(img_wr_data_lo),     // in: 一行的低半部分数据
         .img_wr_data_hi(img_wr_data_hi),     // in: 一行的高半部分数据
 
-        // ---------- 当前活动输入图选择 ----------
-        .start_consume(start),               // in: 启动消费一张新图，同时更新 active buffer 选择
-        .start_buf_sel(start_buf_sel),       // in: 这次计算要消费哪一份输入图：0 选 frame_cache0，1 选 frame_cache1
-        .active_buf_sel(active_buf_sel),     // out: 当前正在被主通路消费的输入图编号
+        // ---------- 消费启动接口 ----------
+        .start_consume(start),               // in: 启动消费一张新图
 
         // ---------- pos 窗口请求 / 返回接口 ----------
         .pos_req_valid(pos_req_valid),       // in: 下游请求一个新的 pos 窗口
         .pos_req_pos(pos_req_pos),           // in: 请求的 pos 编号，范围 0~8，因此使用 4bit
         .consume_tick(consume_tick),
-        .pos_window_valid(pos_window_valid), // out: 输出窗口有效
-        .pos_window_data(pos_window_data)  // out: 返回的 14x10 窗口
+        .pos_window_valid(pos_window_valid), // out: 输入窗口有效
+        .pos_window_data(pos_window_data)  // out: 返回的 14x10 工作集
     );
 
     // 参数存储模块：
     // - 保存 Conv1 整层 11 个 kernel row bank + 1 个 bias bank
-    // - 运行时按 group 输出本 token 所需参数切片
+    // - 运行时按 group 输出当前 token 所需参数切片
     conv_param_store u_conv_param_store (
         .clk(clk),
         .rst_n(rst_n),
 
         // ------------ 权重 SRAM 写控制信号 ------------
         .weight_wr_en(weight_store_wr_en),  // in: 权重写使能   
-        .weight_wr_bank(weight_wr_bank),    // in: 写入哪个权重 bank，当前只使用 0..10 
+        .weight_wr_bank(weight_wr_bank),    // in: 写入哪个weight bank，当前只使用 0..10 
         .weight_wr_addr(weight_wr_addr),    // in: 写入哪个 group 地址，8 个 group 需要 3bit 
         .weight_wr_data(weight_wr_data),    // in: 权重写数据，4 x 7 x 8bit = 224bit 
 
         // ------------ 偏置 SRAM 写控制信号 ------------
         .bias_wr_en(bias_store_wr_en),      // in: 偏置写使能
-        .bias_wr_bank(bias_wr_bank),        // in: 写入哪个偏置 bank，当前版本只允许 0
+        .bias_wr_bank(bias_wr_bank),        // in: 写入哪个bias bank，当前版本只允许 0
         .bias_wr_addr(bias_wr_addr),        // in: 写入哪个 group 地址
         .bias_wr_data(bias_wr_data),        // in: 偏置写数据，4 x 16bit = 64bit
 
@@ -148,13 +141,13 @@ module conv_subsystem #(
         .bias_rd_group(bias_rd_group),      // in: 读取哪个 group 的偏置，地址范围 0..7
 
         // ------------ SRAM 读出数据总线 ------------
-        .weight_data_bus(weight_data_bus),  // out: 4个卷积核：4 x 11 x 7 x 8bit = 2464bit     
-        .bias_data_bus(bias_data_bus)       // out: 4个偏置：4 x 16 = 64bit
+        .weight_data_bus(weight_data_bus),  // out: 11 条 kernel row，按 11 个 224bit 切片展平     
+        .bias_data_bus(bias_data_bus)       // out: 偏置 SRAM 读出数据总线
     );
 
     // 计算核心模块：
-    // - 负责 pos/group token 调度
-    // - 负责驱动 MAC 与量化输出链
+    // -  pos/group token 调度
+    // - 负责驱动 MAC 与MAC 与量化输出链
     conv_core #(
         .M0(M0),
         .SHIFT_N(SHIFT_N)
@@ -165,11 +158,11 @@ module conv_subsystem #(
         .busy(busy),                          // out: 高电平表示当前仍在处理本张图
         .done(done),                          // out: 单拍完成脉冲
 
-        // ---------- 输入图像交互接口 ----------
+        // ---------- 输入输入窗口握手接口 ----------
         .pos_req_valid(pos_req_valid),        // out: 向输入缓存请求一个新的 pos 窗口
         .pos_req_pos(pos_req_pos),            // out: 请求的 pos 编号，范围 0~8，因此使用 4bit
         .consume_tick(consume_tick),
-        .pos_window_valid(pos_window_valid),  // in: 输出窗口有效
+        .pos_window_valid(pos_window_valid),  // in: 输入窗口有效
         .pos_window_data(pos_window_data),  // in: 返回的 14x10 窗口，14 x 10 x 8bit = 1120bit
 
         // ---------- 权重/偏置交互接口 ----------
