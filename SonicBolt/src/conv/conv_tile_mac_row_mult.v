@@ -3,7 +3,7 @@
  * 模块名称: conv_tile_mac_row_mult
  * 作者: SonicBolt 团队
  * 日期: 2026-03-18
- * 版本: v4.0
+ * 版本: v4.1
  *
  * 功能概述:
  *   计算某一条预切分 kernel_row 对应的 7 项行内卷积和。
@@ -23,10 +23,13 @@
  *   - 本级只处理 7 项乘法与行内加法树，不做跨 kernel_row 的累加。
  *   - 输入窗口已经在外部按 kernel_row 预切分，因此本模块不再接收整包 14x10 窗口。
  *   - 权重也已经在外部预切分为当前 kernel_row 的 224bit 行权重。
+ * 
+ * 版本定位:
  *   - v2.0 去掉了 in_val / wt_val / prod / sum 等中间变量，直接用一条表达式描述乘加树，
  *     让综合工具根据目标工艺自行推导乘法器和加法树结构。
  *   - v3.0 认为不需要在计算时对每个输入都拓展位宽，只需要保证 <= 左边的输出位宽就行。
  *   - v4.0 分析得出，7组INT8的乘累加配合得到的最大位宽为 INT19，因此将输出位宽从 INT32 缩减到 INT19
+ *   - v4.1 在内部增加了数据/权重的下沉流水级，与外部 Stage1 的元数据/偏置打拍匹配
  */
 module conv_tile_mac_row_mult (
     input  wire                clk,             // 时钟
@@ -42,6 +45,21 @@ module conv_tile_mac_row_mult (
     integer oy_idx;  // 输出行索引，范围 0..3
     integer ox_idx;  // 输出列索引，范围 0..3
 
+    // ---------- 将输入数据做打拍下沉 ----------
+    reg [4*10*8-1:0] row_window_data_reg;
+    reg [4*7*8-1:0]  weight_row_data_reg;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            row_window_data_reg <= {4*10*8{1'b0}};
+            weight_row_data_reg <= {4*7*8{1'b0}};
+        end else begin
+            row_window_data_reg <= row_window_data;
+            weight_row_data_reg <= weight_row_data;
+        end
+    end
+
+    // ---------- 用打拍后的寄存器参与乘加 ----------
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             out_row_sum_bus <= {4*4*4*19{1'b0}};
@@ -54,20 +72,20 @@ module conv_tile_mac_row_mult (
                         // 数据选择：当前输入数据行：oy_idx，对应数据：i + oy_idx
                         // 权重选择：第 ch_idx 个通道。
                         out_row_sum_bus[((ch_idx * 16 + oy_idx * 4 + ox_idx) * 19) +: 19] <=
-                            ($signed(row_window_data[(oy_idx * 10 + ox_idx + 0) * 8 +: 8]) *
-                            $signed(weight_row_data[(ch_idx * 56) + (0 * 8) +: 8])) +
-                            ($signed(row_window_data[(oy_idx * 10 + ox_idx + 1) * 8 +: 8]) *
-                            $signed(weight_row_data[(ch_idx * 56) + (1 * 8) +: 8])) +
-                            ($signed(row_window_data[(oy_idx * 10 + ox_idx + 2) * 8 +: 8]) *
-                            $signed(weight_row_data[(ch_idx * 56) + (2 * 8) +: 8])) +
-                            ($signed(row_window_data[(oy_idx * 10 + ox_idx + 3) * 8 +: 8]) *
-                            $signed(weight_row_data[(ch_idx * 56) + (3 * 8) +: 8])) +
-                            ($signed(row_window_data[(oy_idx * 10 + ox_idx + 4) * 8 +: 8]) *
-                            $signed(weight_row_data[(ch_idx * 56) + (4 * 8) +: 8])) +
-                            ($signed(row_window_data[(oy_idx * 10 + ox_idx + 5) * 8 +: 8]) *
-                            $signed(weight_row_data[(ch_idx * 56) + (5 * 8) +: 8])) +
-                            ($signed(row_window_data[(oy_idx * 10 + ox_idx + 6) * 8 +: 8]) *
-                            $signed(weight_row_data[(ch_idx * 56) + (6 * 8) +: 8]));
+                            ($signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 0) * 8 +: 8]) *
+                            $signed(weight_row_data_reg[(ch_idx * 56) + (0 * 8) +: 8])) +
+                            ($signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 1) * 8 +: 8]) *
+                            $signed(weight_row_data_reg[(ch_idx * 56) + (1 * 8) +: 8])) +
+                            ($signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 2) * 8 +: 8]) *
+                            $signed(weight_row_data_reg[(ch_idx * 56) + (2 * 8) +: 8])) +
+                            ($signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 3) * 8 +: 8]) *
+                            $signed(weight_row_data_reg[(ch_idx * 56) + (3 * 8) +: 8])) +
+                            ($signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 4) * 8 +: 8]) *
+                            $signed(weight_row_data_reg[(ch_idx * 56) + (4 * 8) +: 8])) +
+                            ($signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 5) * 8 +: 8]) *
+                            $signed(weight_row_data_reg[(ch_idx * 56) + (5 * 8) +: 8])) +
+                            ($signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 6) * 8 +: 8]) *
+                            $signed(weight_row_data_reg[(ch_idx * 56) + (6 * 8) +: 8]));
                     end
                 end
             end

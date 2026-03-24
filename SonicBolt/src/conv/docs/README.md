@@ -1,6 +1,6 @@
 ﻿# Conv 子系统架构说明
 
-> 当前系统所属版本：SonicBolt v2.1
+> 当前系统所属版本：SonicBolt v2.2
 
 ## I. 整体架构
 
@@ -141,23 +141,22 @@ conv_core 的主要功能是根据当前的 pos 和 group **发出请求信号�
 
 conv_core 内部包含一个 conv_tile_mac 模块，负责计算一个完整的 `4(ch) x 4(row) x 4(col)` INT32 tile。
 
-conv_tile_mac 内部包含三级流水线，分别对应三个计算模块：
-1. `conv_tile_mac_input_stage`：只做寄存，不做算术，把输入窗口、参数总线和元数据先切开，避免上游切窗和下游乘法直连
-   - input/output: 14x10x8bit 输入窗口、11×4×7×8bit 权重、4×16bit 偏置
-2. `conv_tile_mac_row_mult`：11 模块并行的乘法单元，每个模块计算一个 kernel_row 的乘加结果，输出 64 个 INT19 的部分和
+conv_tile_mac 在 v2.2 版本内部升级为**四级流水线**（为缓解布线压力，大幅消减长连线及打断大加法树），分别对应以下计算流程：
+1. **局部数据打拍**：原 `conv_tile_mac_input_stage` 被废除，改为将数据总线和权重总线的切片下沉到乘法器内部 `conv_tile_mac_row_mult` 的第一级打拍。避免了外围巨大总线的 Fanout。偏置则通过 `conv_tile_mac_bias_pipe` 单独打拍。
+2. `conv_tile_mac_row_mult`：内部包含 2 级流水（局部寄存输入 + 行乘法计算）。11 个模块并行计算对应的 kernel_row 乘加结果，输出 64 个 INT19 的部分和。
    - input: 4×10×8bit 输入条带，及其对应的4×7×8bit 卷积核行
-   - output: 4×4×4×19bit 部分和
-3. `conv_tile_mac_row_add`：对 11 个 kernel_row 行和以及偏置求和，固定实现为 11 -> 1。
+   - output: 4×4×4×19bit 部分和（经内部打拍输出）
+3. `conv_tile_mac_row_add`：作为后续的第 3、4 级流水，对 11 个 kernel_row 的部分和极偏置进行归约。为了切断 12 个操作数构成的庞大加法树，模块内部已被显式分割为两级时序：第一拍对 12 个输入执行两两相加存入 Register 堆，第二拍汇总得出 64 个最终结果。
    - input: 11×(4×4×4×19bit) 部分和
    - output: 4×4×4×32bit 结果
 
-此外，在流水线执行过程中，MAC 单元还封装了 `conv_tile_mac_meta_pipe`(元数据打拍模块) 和 `conv_tile_mac_bias_pipe`(偏置打拍模块)，**保证元数据和偏置能够在时序上正确对齐**到最终输出的 tile。
+此外，在流水线执行过程中，MAC 单元还封装了 `conv_tile_mac_meta_pipe`(元数据打拍模块)，随数据流水深度一同扩充以**保证元数据能够在时序上严格对齐**到最终输出的 tile（现共需打 4 拍以匹配上述内部流水级）。
 
 #### 3.5.3 量化激活单元
 
 conv_core 内部还包含一个 conv_rescale_relu 模块，负责对 conv_tile_mac 输出的 64 个 INT32 结果做统一量化和 ReLU。
 
-conv_rescale_relu 内部包含两级流水线，分别对应两个计算模块：
+conv_rescale_relu 内部包含**两级流水线**，分别对应两个计算模块：
 1. `conv_rescale`：量化流水第 1 级，负责 64 个 INT32 与常数 M0 的乘法以及移位 SHIFT_N。
    - input: 4×4×4×32bit 输入结果
    - output: 4×4×4×32bit Rescale 结果
@@ -171,5 +170,5 @@ conv_rescale_relu 内部包含两级流水线，分别对应两个计算模块�
 2. 阅读 `conv_shared_input_buffer.v`，理解输入 bank SRAM、`shadow cache`、14 行工作集和两行预取的交互方式。
 3. 阅读 `conv_param_store.v` 以及 `conv_sram_sp.v`，理解权重和偏置的 bank 组织结构
 4. 阅读 `conv_core.v`（**核心**），理解 token 的发出逻辑，以及 conv_tile_mac 和 conv_rescale_relu 的调用关系。这个模块是整个第一层 Conv 子系统的计算和调度核心，它负责发出请求信号、地址，接受数据，执行卷积和量化计算。同 conv_subsystem.v 一样，不必先深究每个 wire 或 reg 的含义，简单理一理子模块连接关系，然后先看子模块。
-5. 阅读 `conv_tile_mac.v`，理解 `conv_core` 内部的 MAC 计算细节。这个模块是整个第一层 Conv 子系统的计算核心，它负责执行卷积计算，包含三级流水线：输入寄存、行乘、求和。这个模块以及下属各个子模块，配合注释，理解起来很容易。
+5. 阅读 `conv_tile_mac.v`，理解 `conv_core` 内部的 MAC 计算细节。这个模块是负责执行卷积算术的核心，经历了布线层面的深度抗拥塞优化（v2.2）：打散了外部寄存器改为局部锁存，并将超大加法树截断为多级流水。配合模块及其子模块内部的改版注释，可以清晰看到总线重构细节。
 6. 阅读 `conv_rescale_relu.v`，理解 `conv_core` 内部的量化激活计算细节。这个模块是整个第一层 Conv 子系统的量化激活核心，它负责执行量化和 ReLU，包含两级流水线：Rescale、ReLU+饱和截断。同 `conv_tile_mac.v`，这个模块理解起来也很容易。
