@@ -1,0 +1,138 @@
+`timescale 1ns / 1ps
+/*
+ * 模块名称: conv_core
+ * 作者: SonicBolt 团队
+ * 日期: 2026-03-25
+ * 版本: v1.0
+ *
+ * 功能概述:
+ *   DWConv 调度与主计算核心。
+ *
+ * 设计定位:
+ *   - 本模块负责
+ *   - DWConv 整层参数保存在独立的 dwconv_param_store 中。
+ *
+ * 当前数据流:
+ *   - 权重和偏置仍然按 group 每拍读取
+ *
+ * 位宽说明:
+ *
+ * 调度语义:
+ *
+ */
+module conv_core #(
+    parameter integer M0      = 59,
+    parameter integer SHIFT_N = 11
+) (
+    input  wire          clk,
+    input  wire          rst_n,
+    output reg           busy,                     // 高电平表示当前仍在处理本张图 
+    output reg           done,                     // 单拍完成脉冲 
+
+    // ---------- 输入数据流接口 ----------
+    input wire           in_stream_valid,          // 输入 tile 有效
+    input wire [3:0]     in_stream_pos,            // 输入 tile 的 pos 编号
+    input wire [2:0]     in_stream_group,          // 输入 tile 的 group 编号
+    input wire [511:0]   in_stream_data,           // 输入 tile 数据，4 x 4 x 4 x 8bit = 512bit
+
+    // ---------- 权重/偏置交互接口 ----------
+    output wire          weight_rd_en,             // Conv 权重 SRAM 读使能    
+    output wire [2:0]    weight_rd_group,          // 读取哪个 group 的权重       
+    output wire          bias_rd_en,               // Conv 偏置 SRAM 读使能  
+    output wire [2:0]    bias_rd_group,            // 读取哪个 group 的偏置     
+    input  wire [3*96-1:0] weight_data_bus,        // 权重 SRAM 读出数据总线
+    input  wire [63:0]   bias_data_bus,            // 偏置 SRAM 读出数据总线，4个偏置，每个16bit
+
+    // ---------- 输出数据流接口 ----------
+    output wire          out_stream_valid,         // 输出元数据：有效  
+    output wire [3:0]    out_stream_pos,           // 输出元数据：位置
+    output wire [2:0]    out_stream_group,         // 输出元数据：通道组  
+    output wire [511:0]  out_stream_data           // 输出数据：量化后的 tile 数据
+);
+
+    reg  [3:0] issue_pos;
+    reg  [2:0] issue_group;
+
+
+    assign weight_rd_group = issue_group;
+    assign bias_rd_group = issue_group;
+
+    always @(posedge clk or negedge rst) begin
+        if (!rst) begin
+            // 参数 SRAM 地址信号初始为0，默认指向 group = 0
+            issue_group <= 3'b0;
+            issue_pos <= 4'b0;
+
+        end
+
+        if (in_stream_valid) begin
+            if (issue_group == 3'd7) begin
+                issue_group <= 3'd0;
+                issue_pos   <= issue_pos + 4'd1;
+            end else begin
+                issue_group <= issue_group + 3'd1;
+            end
+        end
+
+    end
+
+
+    // MAC 负责把一个 {pos, group} token 映射成完整 4ch x 4x4 INT32 tile。
+    dwconv_tile_mac u_conv_tile_mac (
+        .clk(clk),
+        .rst_n(rst_n),
+
+        // ---------- 输入元数据 ----------
+        .in_valid(stage0_valid),              // in: 当前 token 有效     
+        .in_last(stage0_last),                // in: 当前 token 是否为整张图最后一个 token   
+        .in_pos(stage0_pos),                  // in: 当前 token 的 pos 编号，范围 0~8 
+        .in_group(stage0_group),              // in: 当前 token 的 group 编号，范围 0~7     
+        
+        // ---------- 输入数据(总线) ----------
+        .pos_window_data(pos_window_data),    // in: 14x10x8bit 输入窗口         
+        .weight_data_bus(weight_data_bus),    // in: 当前 group 的完整 11x4x7 INT8 权重
+        .bias_data_bus(bias_data_bus),        // in: 当前 group 的完整 4 个 INT16 偏置
+        
+        // ---------- 输出元数据 ----------
+        .out_valid(tile_valid),               // out: 输出累加 tile 有效
+        .out_last(tile_last),                 // out: 输出累加 tile 是否为最后一个 token
+        .out_pos(tile_pos),                   // out: 输出 tile 的 pos
+        .out_group(tile_group),               // out: 输出 tile 的 group
+        
+        // ---------- 输出数据 ----------               
+        .out_accum_bus(tile_accum_bus)        // out: 4(ch) x 4(row) x 4(col) x INT32 的输出累加结果
+    );
+
+    // 后级做 rescale + ReLU + 饱和裁剪，输出最终 8bit tile。
+    conv_rescale_relu #(
+        .M0(M0),
+        .SHIFT_N(SHIFT_N)
+    ) u_conv_rescale_relu (
+        .clk(clk),
+        .rst_n(rst_n),
+
+        // ---------- 输入元数据 -----------
+        .in_valid(tile_valid),          // in: 输入 tile 有效     
+        .in_last(tile_last),            // in: 输入 tile 是否为最后一个 token   
+        .in_pos(tile_pos),              // in: 输入 tile 的 pos 
+        .in_group(tile_group),          // in: 输入 tile 的 group    
+        
+        // ---------- 输入数据 -----------
+        .in_data_bus(tile_accum_bus),   // in: 64 个 INT32 累加值
+
+        // ---------- 输出元数据 ---------
+        .out_valid(quant_valid),        // out: 输出量化 tile 有效
+        .out_last(quant_last),          // out: 输出量化 tile 是否为最后一个 token  
+        .out_pos(quant_pos),            // out: 输出 tile 的 pos
+        .out_group(quant_group),        // out: 输出 tile 的 group
+
+        // ----------- 输出数据 ----------
+        .out_data_bus(quant_data)       // out: 64 个 INT8 输出值
+    );
+
+    assign out_stream_valid = quant_valid;
+    assign out_stream_pos   = quant_pos;
+    assign out_stream_group = quant_group;
+    assign out_stream_data  = quant_data;
+
+endmodule

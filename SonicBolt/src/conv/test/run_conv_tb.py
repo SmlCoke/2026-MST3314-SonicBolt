@@ -234,7 +234,7 @@ def run_single_sample(vvp_path: Path, sample_id: int, enable_wave: bool) -> Tupl
 
     cmd = [
         "vvp",
-        str(vvp_path),
+        str(vvp_path.resolve()),
         # 以下是 testbench 需要的参数，全部通过 +var=value 形式传递
         f"+PREP_DIR={PREP_DIR.resolve()}",   # 预处理数据根目录，例如 prepared_conv_test
         f"+SAMPLE_ID={sample_id}",

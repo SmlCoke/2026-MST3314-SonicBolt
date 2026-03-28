@@ -61,7 +61,6 @@ module conv_core #(
     input  wire [63:0]   bias_data_bus,            // 偏置 SRAM 读出数据总线，4个偏置，每个16bit
 
     // ---------- 输出数据流接口 ----------
-    input  wire          out_stream_ready,         // 下游握手信号  
     output wire          out_stream_valid,         // 输出元数据：有效  
     output wire [3:0]    out_stream_pos,           // 输出元数据：位置
     output wire [2:0]    out_stream_group,         // 输出元数据：通道组  
@@ -127,6 +126,7 @@ module conv_core #(
     assign weight_rd_group = issue_group;
     assign bias_rd_en      = issue_fire;
     assign bias_rd_group   = issue_group;
+
 
     // 主状态机：
     // 1. start 拉高后进入 busy
