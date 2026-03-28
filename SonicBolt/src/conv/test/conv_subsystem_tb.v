@@ -3,8 +3,8 @@
 /*
  * 模块名称: conv_subsystem_tb
  * 作者: SonicBolt 团队
- * 日期: 2026-03-19
- * 版本: v2.3
+ * 日期: 2026-03-28
+ * 版本: v2.4
  *
  * 功能概述:
  *   面向当前 conv_subsystem 的自检 testbench。
@@ -18,6 +18,7 @@
  *   - 当前 Conv1 采用 `9 个 pos x 8 个 group = 72 个 token`
  *   - 每个 token 对应一个 `4ch x 4x4 x 8bit = 512bit` 输出 tile
  *   - 当前 testbench 采用单帧缓存流程：先装载完整输入图，再启动计算
+ *   - 相比 v2.3, v2.4 删除了夏优握手信号，增添了下游第二层启动信号 fire
  *
  * 日志格式:
  *   - 每个有效 tile 输出一行：
@@ -63,8 +64,8 @@ module conv_subsystem_tb #(
     reg [63:0] bias_wr_data;
 
     // 主输出流接口：每拍最多输出一个 512bit tile。
-    reg out_stream_ready;
     wire out_stream_valid;
+    wire out_stream_fire;
     wire [3:0] out_stream_pos;
     wire [2:0] out_stream_group;
     wire [511:0] out_stream_data;
@@ -113,10 +114,10 @@ module conv_subsystem_tb #(
         .bias_wr_bank(bias_wr_bank),
         .bias_wr_addr(bias_wr_addr),
         .bias_wr_data(bias_wr_data),
-        .out_stream_ready(out_stream_ready),
         .out_stream_valid(out_stream_valid),
         .out_stream_pos(out_stream_pos),
         .out_stream_group(out_stream_group),
+        .out_stream_fire(out_stream_fire),
         .out_stream_data(out_stream_data)
     );
 
@@ -141,7 +142,6 @@ module conv_subsystem_tb #(
             bias_wr_bank = 1'b0;
             bias_wr_addr = 3'd0;
             bias_wr_data = 64'd0;
-            out_stream_ready = 1'b1;
             cycle_counter = 0;
             tile_counter = 0;
             seen_first_tile = 1'b0;

@@ -2,16 +2,10 @@
 /*
  * 模块名称: conv_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-03-24
- * 版本: v2.2
+ * 日期: 2026-03-28
+ * 版本: v2.3
  *
  * 功能概述: 基于 pos-major 数据流的 Conv 子系统顶层
- *
- * 版本定位:
- *   - 当前只实现 Conv 层，但参数存储语义已经固定为“层内完整参数 SRAM”。
- *   - 本模块内部保存的是 Conv 整层的全部权重和全部偏置，不是“当前这次推理临时需要的参数”。
- *   - 当前版本输入侧改为单帧缓存，不再保留双 bank ping-pong 输入缓冲
- *   - 相比 v2.0 版本，当前顶层为“单 SRAM 缓存完整输入 + 单 reg 缓存 window + conv_core 控制预取”主通路。
  *
  * 主数据流:
  *   输入图像 -> conv_shared_input_buffer -> conv_core -> out_stream_*
@@ -22,8 +16,16 @@
  *
  * 参数存储:
  *   - 由独立的 conv_param_store 管理 Conv 整层参数。
-  *   - 当前组织为 11 个 weight bank + 1 个 bias bank。
-  *   - 运行时只按 group 读取其中一部分切片。
+ *   - 当前组织为 11 个 weight bank + 1 个 bias bank。
+ *   - 运行时只按 group 读取其中一部分切片。
+ * 
+ * 版本定位:
+ *   - 当前只实现 Conv 层，但参数存储语义已经固定为“层内完整参数 SRAM”。
+ *   - 本模块内部保存的是 Conv 整层的全部权重和全部偏置，不是“当前这次推理临时需要的参数”。
+ *   - 当前版本输入侧改为单帧缓存，不再保留双 bank ping-pong 输入缓冲
+ *   - 相比 v2.0 版本，当前顶层为“单 SRAM 缓存完整输入 + 单 reg 缓存 window + conv_core 控制预取”主通路。
+ *   - v2.3 相比 v2.2 增加了第二层启动信号 out_stream_fire，当该信号为高时，告诉第二层 SRAM: 
+ *     "马上开始准备参数, 下一个周期就要开始计算了"
  */
 module conv_subsystem #(
     parameter integer M0      = 111,
@@ -54,10 +56,10 @@ module conv_subsystem #(
     input  wire [63:0]   bias_wr_data,     // 1 个偏置 word = 4 x INT16 = 64bit
 
     // ------------ 输出数据流接口 ------------
-    input  wire          out_stream_ready, // 预留的下游 ready，当前版本默认视作常高
     output wire          out_stream_valid, // 输出 tile 有效
     output wire [3:0]    out_stream_pos,   // 输出 tile 的 pos 编号
     output wire [2:0]    out_stream_group, // 输出 tile 的 group 编号
+    output wire          out_stream_fire,  // 输出的第二层启动信号
     output wire [511:0]  out_stream_data   // 输出 tile 数据，4 x 4 x 4 x 8bit = 512bit
 );
 
@@ -80,6 +82,7 @@ module conv_subsystem #(
     wire [63:0]   bias_data_bus;           // 偏置 SRAM 读出数据总线
 
     wire          tile_valid_int;          // Conv 输出元数据：有效  
+    wire          tile_last_int;           // Conv 输出元数据：有效
     wire [3:0]    tile_pos_int;            // Conv 输出元数据：位置
     wire [2:0]    tile_group_int;          // Conv 输出元数据：通道组  
     wire [511:0]  tile_data_int;           // Conv 输出数据：量化后的 tile 数据 
@@ -174,16 +177,19 @@ module conv_subsystem #(
         .bias_data_bus(bias_data_bus),        // in: 偏置 SRAM 读出数据总线
 
         // ---------- 输出数据流接口 ----------
-        .out_stream_ready(out_stream_ready),   // in: 下游握手信号
         .out_stream_valid(tile_valid_int),     // out: 输出元数据：有效
+        .out_stream_last(tile_last_int),       // out: 输出元数据：最后
         .out_stream_pos(tile_pos_int),         // out: 输出元数据：位置
         .out_stream_group(tile_group_int),     // out: 输出元数据：通道组
+        .out_stream_fire(tile_fire_int),       // out: 输出元数据：第二层启动信号
         .out_stream_data(tile_data_int)        // out: 输出数据：量化后的 tile 数据
     );
 
     assign out_stream_valid = tile_valid_int;
+    assign out_stream_last  = tile_last_int;
     assign out_stream_pos   = tile_pos_int;
     assign out_stream_group = tile_group_int;
+    assign out_stream_fire  = tile_fire_int;
     assign out_stream_data  = tile_data_int;
 
 endmodule

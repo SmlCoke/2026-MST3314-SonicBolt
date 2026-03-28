@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_core
  * 作者: SonicBolt 团队
- * 日期: 2026-03-24
- * 版本: v2.0
+ * 日期: 2026-03-28
+ * 版本: v2.1
  *
  * 功能概述:
  *   Conv 调度与主计算核心。
@@ -31,9 +31,11 @@
  *   - token 发射顺序固定为:
  *       pos=0, group=0..7; pos=1, group=0..7; ...; pos=8, group=0..7
  *
- * 相比 conv_core v1.0 的更新:
- *   - `pos_req_valid` 不再每拍都请求窗口，而是只在初始化和 pos 边界请求，这样可以减少动态功耗
- *   - `consume_tick` 改为与 stage0_valid 对齐，用来驱动输入缓存预取。
+ * 版本定位:
+ *   - v2.0 相比 v1.0 `pos_req_valid` 不再每拍都请求窗口，而是只在初始化和 pos 边界请求，
+ *     这样可以减少动态功耗, `consume_tick` 改为与 stage0_valid 对齐，用来驱动输入缓存预取。
+ *   - v2.1 相比 v2.0 增加了第二层启动信号 out_stream_fire，当该信号为高时，告诉第二层 SRAM: 
+ *     "马上开始准备参数, 下一个周期就要开始计算了"
  */
 module conv_core #(
     parameter integer M0      = 111,
@@ -62,8 +64,10 @@ module conv_core #(
 
     // ---------- 输出数据流接口 ----------
     output wire          out_stream_valid,         // 输出元数据：有效  
+    output wire          out_stream_last,          // 输出元数据：最后
     output wire [3:0]    out_stream_pos,           // 输出元数据：位置
     output wire [2:0]    out_stream_group,         // 输出元数据：通道组  
+    output wire          out_stream_fire,          // 输出元数据：夏优启动信号
     output wire [511:0]  out_stream_data           // 输出数据：量化后的 tile 数据
 );
 
@@ -94,6 +98,7 @@ module conv_core #(
     wire       tile_last;
     wire [3:0] tile_pos;
     wire [2:0] tile_group;
+    wire       tile_fire;
     wire [2047:0] tile_accum_bus;
 
     // 量化 / ReLU 后的输出流。
@@ -101,6 +106,7 @@ module conv_core #(
     wire         quant_last;
     wire [3:0]   quant_pos;
     wire [2:0]   quant_group;
+    wire         quant_fire;
     wire [511:0] quant_data;
 
     // 只有当当前工作集已经有效，且本图还有 token 未发完时，才能真正发射一个 token。
@@ -189,6 +195,7 @@ module conv_core #(
         .in_last(stage0_last),                // in: 当前 token 是否为整张图最后一个 token   
         .in_pos(stage0_pos),                  // in: 当前 token 的 pos 编号，范围 0~8 
         .in_group(stage0_group),              // in: 当前 token 的 group 编号，范围 0~7     
+        .in_fire(issue_fire),                 // in: 通知第二层准备启动计算
         
         // ---------- 输入数据(总线) ----------
         .pos_window_data(pos_window_data),    // in: 14x10x8bit 输入窗口         
@@ -200,6 +207,7 @@ module conv_core #(
         .out_last(tile_last),                 // out: 输出累加 tile 是否为最后一个 token
         .out_pos(tile_pos),                   // out: 输出 tile 的 pos
         .out_group(tile_group),               // out: 输出 tile 的 group
+        .out_fire(tile_fire),                 // out: 输出的第二层启动信号
         
         // ---------- 输出数据 ----------               
         .out_accum_bus(tile_accum_bus)        // out: 4(ch) x 4(row) x 4(col) x INT32 的输出累加结果
@@ -218,6 +226,7 @@ module conv_core #(
         .in_last(tile_last),            // in: 输入 tile 是否为最后一个 token   
         .in_pos(tile_pos),              // in: 输入 tile 的 pos 
         .in_group(tile_group),          // in: 输入 tile 的 group    
+        .in_fire(tile_fire),            // in: 输入的第二层启动信号
         
         // ---------- 输入数据 -----------
         .in_data_bus(tile_accum_bus),   // in: 64 个 INT32 累加值
@@ -227,14 +236,17 @@ module conv_core #(
         .out_last(quant_last),          // out: 输出量化 tile 是否为最后一个 token  
         .out_pos(quant_pos),            // out: 输出 tile 的 pos
         .out_group(quant_group),        // out: 输出 tile 的 group
+        .out_fire(quant_fire),          // out: 输出的第二层启动信号
 
         // ----------- 输出数据 ----------
         .out_data_bus(quant_data)       // out: 64 个 INT8 输出值
     );
 
     assign out_stream_valid = quant_valid;
+    assign out_stream_last  = quant_last;
     assign out_stream_pos   = quant_pos;
     assign out_stream_group = quant_group;
+    assign out_stream_fire  = quant_fire;
     assign out_stream_data  = quant_data;
 
 endmodule

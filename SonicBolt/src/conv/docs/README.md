@@ -1,6 +1,6 @@
 ﻿# Conv 子系统架构说明
 
-> 当前系统所属版本：SonicBolt v2.2
+> 当前系统所属版本：SonicBolt v2.3
 
 ## I. 整体架构
 
@@ -67,6 +67,7 @@ Conv 层在计算时，首先固定 pos，然后每个时钟上升沿更新 grou
     (2) last: 当前 token 是否是最后一个 token
     (3) pos：当前输入窗口在输入特征图上的位置，取值范围
     (4) group：当前卷积核组，取值范围
+    (5) fire: 告诉 DWConv 开始准备参数，fire 只应该比 valid 数据提前一个周期到来。
 
 ### 3.3 输入缓存：conv_shared_input_buffer
 

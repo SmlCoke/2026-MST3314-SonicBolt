@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_tile_mac_meta_pipe
  * 作者: SonicBolt 团队
- * 日期: 2026-03-15
- * 版本: v1.0
+ * 日期: 2026-03-28
+ * 版本: v1.1
  *
  * 功能概述:
  *   为 conv_tile_mac 的各级流水统一传递 metadata。
@@ -19,8 +19,9 @@
  *   - 这样可以避免把 metadata 对齐逻辑分散到各个算术子模块中。
  *   - 本模块的时序与 conv_tile_mac_input_stage 对齐
  *
- * 更新说明:
- *   - 当前 group 范围已扩展为 0..7，因此 group 位宽从 2bit 改为 3bit。
+ * 版本定位:
+ *   - v1.0: group 范围已扩展为 0..7，因此 group 位宽从 2bit 改为 3bit。
+ *   - v1.1: 新增元数据 fire
  */
 module conv_tile_mac_meta_pipe (
     input  wire       clk,       // 时钟
@@ -31,12 +32,14 @@ module conv_tile_mac_meta_pipe (
     input  wire       in_last,   // 输入是否为整张图最后一个 token
     input  wire [3:0] in_pos,    // 输入 token 的 pos 编号
     input  wire [2:0] in_group,  // 输入 token 的 group 编号
-    
+    input  wire       in_fire,   // 输入的第二层启动信号
+
     // ---------- 输出 metadata ----------
     output reg        out_valid, // 打一拍后的 valid
     output reg        out_last,  // 打一拍后的 last
     output reg [3:0]  out_pos,   // 打一拍后的 pos
-    output reg [2:0]  out_group  // 打一拍后的 group
+    output reg [2:0]  out_group, // 打一拍后的 group
+    output reg        out_fire   // 打一拍后的第二层启动信号
 );
 
     always @(posedge clk or negedge rst_n) begin
@@ -45,11 +48,13 @@ module conv_tile_mac_meta_pipe (
             out_last  <= 1'b0;
             out_pos   <= 4'd0;
             out_group <= 3'd0;
+            out_fire  <= 1'b0;
         end else begin
             out_valid <= in_valid;
             out_last  <= in_last;
             out_pos   <= in_pos;
             out_group <= in_group;
+            out_fire  <= in_fire;
         end
     end
 

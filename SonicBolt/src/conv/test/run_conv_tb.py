@@ -168,7 +168,7 @@ def compile_testbench() -> Path:
     cmd = ["iverilog", "-g2012", "-s", "conv_subsystem_tb", "-o", str(vvp_path), *source_files]
     result = run_cmd(cmd, cwd=ROOT_DIR, stdout_path=compile_log, stderr_path=compile_err)
     if result.returncode != 0:
-        raise RuntimeError("iverilog 编译失败，请检查 compile.log / compile_stderr.log")
+        raise RuntimeError(f"iverilog 编译失败，请检查 {compile_log} / {compile_err}")
     return vvp_path
 
 
