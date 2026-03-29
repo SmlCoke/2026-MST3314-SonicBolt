@@ -1,24 +1,21 @@
 `timescale 1ns / 1ps
 /*
- * 模块名称: conv_rescale
+ * 模块名称: dwconv_rescale
  * 作者: SonicBolt 团队
  * 日期: 2026-03-29
- * 版本: v2.1
+ * 版本: v1.0
  *
  * 功能概述:
- *   量化流水第 1 级，负责 64 个 INT32 与常数 M0 的乘法以及移位 SHIFT_N。
- * 
- * 版本定位：
- *   - v2.0 存在惊天大 BUG, 没有例化参数 SHIFT_N, v2.1 修复
+ *   量化流水第 1 级，负责 16 个 INT32 与常数 M0 的乘法以及移位 SHIFT_N。
  */
-module conv_rescale #(
-    parameter integer M0 = 111,
-    parameter integer SHIFT_N = 14
+module dwconv_rescale #(
+    parameter integer M0 = 59,
+    parameter integer SHIFT_N = 11
 ) (
     input  wire          clk,          // 时钟
     input  wire          rst_n,        // 低有效复位
-    input  wire [2047:0] in_data_bus,  // 64 个 INT32 输入值
-    output reg  [2047:0] out_rescale_bus  // 64 个 INT32 乘法结果
+    input  wire [511:0] in_data_bus,  // 16 个 INT32 输入值
+    output reg  [511:0] out_rescale_bus  // 16 个 INT32 量化结果
 );
 
     integer idx;
@@ -30,7 +27,7 @@ module conv_rescale #(
         if (!rst_n) begin
             out_rescale_bus <= 2048'd0;
         end else begin
-            for (idx = 0; idx < 64; idx = idx + 1) begin
+            for (idx = 0; idx < 16; idx = idx + 1) begin
                 current_value = in_data_bus[idx*32 +: 32];
                 mult_value = current_value * M0;
                 shifted_value = mult_value >>> SHIFT_N;

@@ -2,7 +2,7 @@
 /*
  * 模块名称: dwconv_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-03-24
+ * 日期: 2026-03-29
  * 版本: v1.0
  *
  * 功能概述: 基于 pos-major 数据流的 DWConv 子系统顶层
@@ -31,9 +31,11 @@ module dwconv_subsystem #(
 
     // ------------ 输入数据流接口 ------------
     input wire           in_stream_valid,  // 输入 tile 有效
+    input wire           in_stream_last,   // 输入 tile 是否是最后一个
     input wire [3:0]     in_stream_pos,    // 输入 tile 的 pos 编号
     input wire [2:0]     in_stream_group,  // 输入 tile 的 group 编号
-    input wire [511:0]   in_stream_data    // 输入 tile 数据，4 x 4 x 4 x 8bit = 512bit
+    input wire           in_stream_fire,   // 第二层启动信号
+    input wire [511:0]   in_stream_data,   // 输入 tile 数据，4 x 4 x 4 x 8bit = 512bit
 
     // ------------ 权重 SRAM 写控制信号 ------------
     input  wire          weight_wr_en,     // DWConv 权重写使能
@@ -67,10 +69,10 @@ module dwconv_subsystem #(
     wire [3*96-1:0] weight_data_bus;       // 3 条 kernel row，按 3 个 96bit 切片展平
     wire [63:0]   bias_data_bus;           // 偏置 SRAM 读出数据总线
 
-    wire          tile_valid_int;          // Conv 输出元数据：有效  
-    wire [3:0]    tile_pos_int;            // Conv 输出元数据：位置
-    wire [2:0]    tile_group_int;          // Conv 输出元数据：通道组  
-    wire [127:0]  tile_data_int;           // Conv 输出数据：量化后的 tile 数据 
+    wire          tile_valid_int;          // DWConv 输出元数据：有效  
+    wire [3:0]    tile_pos_int;            // DWConv 输出元数据：位置
+    wire [2:0]    tile_group_int;          // DWConv 输出元数据：通道组  
+    wire [127:0]  tile_data_int;           // DWConv 输出数据：量化后的 tile 数据 
 
     // 忙于计算当前图时，禁止覆盖本层参数 SRAM。
     assign weight_store_wr_en = weight_wr_en && !busy;
@@ -122,20 +124,21 @@ module dwconv_subsystem #(
 
         // ---------- 输入数据流接口 ----------
         .in_stream_valid(in_stream_valid),    // in: 输入 tile 有效
+        .in_stream_last(in_stream_last),      // in: 输入 tile 是否是最后一个
         .in_stream_pos(in_stream_pos),        // in: 输入 tile 的 pos 编号
         .in_stream_group(in_stream_group),    // in: 输入 tile 的 group 编号
         .in_stream_data(in_stream_data),      // in: 输入 tile 数据，4 x 4 x 4 x 8bit = 512bit
+        .in_stream_fire(in_stream_fire),      // in: 输入的第二层启动信号
 
         // ---------- 权重/偏置交互接口 ----------
-        .weight_rd_en(weight_rd_en),          // out: Conv 权重 SRAM 读使能
+        .weight_rd_en(weight_rd_en),          // out: DWConv 权重 SRAM 读使能
         .weight_rd_group(weight_rd_group),    // out: 读取哪个 group 的权重
-        .bias_rd_en(bias_rd_en),              // out: Conv 偏置 SRAM 读使能
+        .bias_rd_en(bias_rd_en),              // out: DWConv 偏置 SRAM 读使能
         .bias_rd_group(bias_rd_group),        // out: 读取哪个 group 的偏置
         .weight_data_bus(weight_data_bus),    // in: 权重 SRAM 读出数据总线
         .bias_data_bus(bias_data_bus),        // in: 偏置 SRAM 读出数据总线
 
         // ---------- 输出数据流接口 ----------
-        .out_stream_ready(out_stream_ready),   // in: 下游握手信号
         .out_stream_valid(tile_valid_int),     // out: 输出元数据：有效
         .out_stream_pos(tile_pos_int),         // out: 输出元数据：位置
         .out_stream_group(tile_group_int),     // out: 输出元数据：通道组

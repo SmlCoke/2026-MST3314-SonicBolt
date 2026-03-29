@@ -1,78 +1,56 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-模块名称: run_conv_tb
+run_conv_tb
 
-功能概述:
-    统一调度 Conv 子系统验证流程，按顺序完成：
-    1. 调用数据预处理脚本，生成 testbench 可直接加载的 mem 文件
-    2. 使用 iverilog 编译当前 conv RTL 和 testbench
-    3. 用 vvp 逐样本运行仿真
-    4. 解析 testbench 打印出的 TILE 行
-    5. 与黄金 tile 文件逐项比对
-    6. 输出 summary.json 和 mismatch_report.txt
-
-默认行为:
-    - 默认从样本 0 开始
-    - 默认运行 5 个样本
-    - 默认不开波形
-    - 默认每个样本单独运行一次 vvp
-
-执行方式:
-    python run_conv_tb.py [--sample-count N] [--start-index M] [--wave] [--keep-build]
-输出目录:
-    所有日志、编译产物和比对结果统一写入:
-        SonicBolt/src/conv/test/results/
+统一调度 Conv testbench 的单样本验证流程：
+1. 预处理 `SonicBolt/data/Test/` 中唯一的一组测试数据
+2. 编译当前 conv RTL 与 testbench
+3. 运行一次仿真
+4. 解析 TILE 输出并与 golden tile 对比
+5. 输出 summary.json 和 mismatch_report.txt
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import shutil
 import subprocess
 import sys
 import textwrap
+import traceback
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-
-# ---------------------------------------------------------------------------
-# 目录常量
-# ROOT_DIR 回到整个 CNN-Accelerator 仓库根目录
-# 后续路径都基于这个根目录拼出来
-# ---------------------------------------------------------------------------
+# 设置关键路径全局变量
+# ROOT 代表 SonicBolt 仓库根目录
 ROOT_DIR = Path(__file__).resolve().parents[4]
 CONV_DIR = ROOT_DIR / "SonicBolt" / "src" / "conv"
 DATA_DIR = ROOT_DIR / "SonicBolt" / "data"
 TEST_DIR = CONV_DIR / "test"
-PREP_DIR = DATA_DIR / "prepared_conv_test"
+PREP_DIR = DATA_DIR / "prepared_test"
 RESULTS_DIR = TEST_DIR / "results"
+PREP_SCRIPT = DATA_DIR / "prepare_test_data.py"
 
-# ---------------------------------------------------------------------------
-# 当前架构固定参数
-# ---------------------------------------------------------------------------
-TOKEN_COUNT = 72     # 每个样本固定输出 72 个 tile = 9 pos x 8 groups
-GROUP_COUNT = 8      # group 范围 0..7
-TILE_HEX_LEN = 128   # 512bit tile 对应 128 个十六进制字符
-
-# testbench 中每个 tile 的打印格式：
-#   TILE sample=<n> pos=<p> group=<g> data=<hex>
+# 当前只保留单样本流程，因此 sample id 固定为 0。
+POS_COUNT = 9
+GROUP_COUNT = 8
+TOKEN_COUNT = POS_COUNT * GROUP_COUNT
+TILE_HEX_LEN = 128 # 4(ch) x 4(row) x 4(col) x 2(hex per byte) = 128
 TILE_RE = re.compile(
-    r"^TILE sample=(?P<sample>\d+) pos=(?P<pos>\d+) group=(?P<group>\d+) data=(?P<data>[0-9a-fA-FxXzZ]+)$"
+    r"^TILE pos=(?P<pos>\d+) group=(?P<group>\d+) data=(?P<data>[0-9a-fA-FxXzZ]+)$"
 )
-# ^ 和 $ 确保整行完全匹配，避免误匹配其他日志行
-# (?P<name>...) 是命名捕获组，方便后续直接通过 groupdict() 获取 pos/group/data 等字段
 
 
 def parse_args() -> argparse.Namespace:
-    """解析命令行参数。"""
-    parser = argparse.ArgumentParser(description="运行 Conv 子系统 testbench")
-    parser.add_argument("--sample-count", type=int, default=5, help="处理样本数，默认 5")
-    parser.add_argument("--start-index", type=int, default=0, help="起始样本编号，默认 0")
-    parser.add_argument("--wave", action="store_true", help="打开波形导出")
-    parser.add_argument("--keep-build", action="store_true", help="保留已有 results 目录内容")
+    """解析当前仍然保留的命令行参数。"""
+    parser = argparse.ArgumentParser(description="Run the Conv subsystem testbench on the single Test sample")
+    parser.add_argument("--wave", action="store_true", help="Enable VCD dump")
+    parser.add_argument("--keep-build", action="store_true", help="Keep existing files in results/")
     return parser.parse_args()
 
 
@@ -82,13 +60,7 @@ def run_cmd(
     stdout_path: Path | None = None,
     stderr_path: Path | None = None,
 ) -> subprocess.CompletedProcess:
-    """
-    运行一条外部命令。
-
-    说明:
-        - 若指定 stdout_path / stderr_path，则把标准输出和标准错误分别落盘
-        - 若未指定，则把输出保留在 CompletedProcess 中
-    """
+    """执行外部命令，并按需把 stdout/stderr 落盘。"""
     stdout_handle = stdout_path.open("w", encoding="utf-8") if stdout_path else subprocess.PIPE
     stderr_handle = stderr_path.open("w", encoding="utf-8") if stderr_path else subprocess.PIPE
     try:
@@ -98,6 +70,7 @@ def run_cmd(
             text=True,
             stdout=stdout_handle,
             stderr=stderr_handle,
+            close_fds=True,
             check=False,
         )
     finally:
@@ -109,12 +82,7 @@ def run_cmd(
 
 
 def ensure_results_dir(keep_build: bool) -> None:
-    """
-    准备 results 目录。
-
-    - 若目录不存在则创建
-    - 若 keep_build=False，则清空旧的文件和子目录
-    """
+    """准备 results 目录；默认清理旧结果。"""
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     if not keep_build:
         for path in RESULTS_DIR.iterdir():
@@ -124,166 +92,149 @@ def ensure_results_dir(keep_build: bool) -> None:
                 shutil.rmtree(path)
 
 
-def preprocess_data(start_index: int, sample_count: int) -> None:
-    """
-    调用 data/prepare_conv_test_data.py 数据预处理脚本，生成:
-    - 权重 mem (11*bank, depth=8, word_width = 4*7*8, 大编号通道在前，右侧权重在前)
-    - 偏置 mem (1*bank, depth=8, word_width = 4*8, 大编号通道在前)
-    - 输入行 mem (按 pos/group 索引，每组4*4*4 bit，大编号通道在前，右侧数据在前)
-    - 黄金 tile mem (格式完全同输入行 mem)
-    """
-    cmd = [
-        sys.executable,
-        str(DATA_DIR / "prepare_conv_test_data.py"),
-        "--start-index",
-        str(start_index),
-        "--sample-count",
-        str(sample_count),
-    ]
-    result = run_cmd(
-        cmd,
-        cwd=ROOT_DIR,
-        stdout_path=RESULTS_DIR / "prepare_stdout.log",
-        stderr_path=RESULTS_DIR / "prepare_stderr.log",
-    )
-    if result.returncode != 0:
-        raise RuntimeError("数据预处理失败，请检查 prepare_stderr.log")
+def preprocess_data() -> None:
+    """加载并调用预处理脚本，生成单样本 mem 文件。"""
+    # 将 SonicBolt/data/prepare_conv_test_data.py 作为模块导入
+    spec = importlib.util.spec_from_file_location("prepare_test_data", PREP_SCRIPT)
+
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load {PREP_SCRIPT}")
+
+    # 创建模块对象
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # 预处理脚本的输出也统一写入 results 目录，方便排查问题。
+    stdout_path = RESULTS_DIR / "prepare_stdout.log"
+    stderr_path = RESULTS_DIR / "prepare_stderr.log"
+    with stdout_path.open("w", encoding="utf-8") as stdout_handle, stderr_path.open(
+        "w", encoding="utf-8"
+    ) as stderr_handle:
+        try:
+            # 预处理脚本的输出也统一写入 results 目录，方便排查问题。
+            with redirect_stdout(stdout_handle), redirect_stderr(stderr_handle):
+                # 执行模块中的 prepare_single_sample 函数，生成预处理数据
+                module.prepare_single_sample()
+        except Exception:
+            with redirect_stderr(stderr_handle):
+                traceback.print_exc()
+            raise RuntimeError("Data preparation failed, check prepare_stderr.log") from None
 
 
 def compile_testbench() -> Path:
-    """
-    编译 conv RTL 和 testbench。
-
-    返回值:
-        生成的 vvp 可执行文件路径
-    """
+    """编译 conv RTL 和 conv_subsystem_tb，返回生成的 vvp 路径。"""
     vvp_path = RESULTS_DIR / "conv_subsystem_tb.vvp"
     compile_log = RESULTS_DIR / "compile.log"
     compile_err = RESULTS_DIR / "compile_stderr.log"
 
-    # 显式收集当前 conv 目录下的所有 RTL，再加上 testbench 顶层
+    # 收集 conv 目录下所有 RTL，再追加 testbench 顶层文件。
     source_files = sorted(str(path) for path in CONV_DIR.glob("*.v"))
     source_files.append(str(TEST_DIR / "conv_subsystem_tb.v"))
 
+    # 利用 iverilog 工具，编译所有 RTL 模块以及 Testbench，生成 vvp 可执行文件。
     cmd = ["iverilog", "-g2012", "-s", "conv_subsystem_tb", "-o", str(vvp_path), *source_files]
+    # 编译日志分别在 compile.log 和 compile_stderr.log
     result = run_cmd(cmd, cwd=ROOT_DIR, stdout_path=compile_log, stderr_path=compile_err)
     if result.returncode != 0:
-        raise RuntimeError(f"iverilog 编译失败，请检查 {compile_log} / {compile_err}")
+        raise RuntimeError(f"iverilog compile failed, check {compile_log} / {compile_err}")
     return vvp_path
 
 
-def load_golden_tiles(sample_id: int) -> Dict[Tuple[int, int], str]:
-    """
-    读取某个样本的黄金 tile 文件。
-    黄金 tile 文件行格式：pos, group, tile_hex
-    返回:
-        key   = (pos, group)
-        value = 128 位十六进制字符串
-    """
-    golden_path = PREP_DIR / "samples" / f"sample_{sample_id:03d}_tiles.mem"
+def load_golden_tiles() -> Dict[Tuple[int, int], str]:
+    """读取单样本的 golden tile 文件。"""
+    golden_path = PREP_DIR / "samples" / "sample_conv_tiles.mem"
     golden: Dict[Tuple[int, int], str] = {}
     with golden_path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line:
                 continue
+            # line 的形式是：“<pos> <group> <tile_hex>”
             pos_text, group_text, tile_hex = line.split()
             golden[(int(pos_text), int(group_text))] = tile_hex.lower().zfill(TILE_HEX_LEN)
     return golden
 
 
 def parse_sim_tiles(log_path: Path) -> Dict[Tuple[int, int], str]:
-    """
-    从单样本仿真日志中提取 testbench 打印的 TILE 行。
-    返回格式："TILE sample=%0d pos=%0d group=%0d data=%0128x"
-    返回格式与 load_golden_tiles 一致，便于直接比对。
-    """
+    """从仿真日志中提取 testbench 打印出的 TILE 行。"""
     parsed: Dict[Tuple[int, int], str] = {}
     with log_path.open("r", encoding="utf-8") as fh:
         for raw_line in fh:
             line = raw_line.strip()
+            # 正则匹配解析 TILE 行，提取 pos、group 和 data 字段
             match = TILE_RE.match(line)
             if not match:
                 continue
             pos = int(match.group("pos"))
             group = int(match.group("group"))
+            # zfill(x) 在字符串左侧填充 0 ，直到长度达到 x位
+            # 这样做的原因：在硬件仿真（比如 Verilog 的 $display 打印 %h）时，如果高位是 0，有些仿真器会自动省略前面的前导0。
             data = match.group("data").lower().zfill(TILE_HEX_LEN)
             parsed[(pos, group)] = data
     return parsed
 
 
 def tile_has_unknown(tile_hex: str) -> bool:
-    """检查 tile 字符串是否仍包含 X/Z 未知态。"""
+    """检查 tile 中是否含有 x/z。"""
     lowered = tile_hex.lower()
     return ("x" in lowered) or ("z" in lowered)
 
 
-def run_single_sample(vvp_path: Path, sample_id: int, enable_wave: bool) -> Tuple[Path, Dict[Tuple[int, int], str]]:
-    """
-    运行一个样本的仿真。
+def run_single_sample(vvp_path: Path, enable_wave: bool) -> Tuple[Path, Dict[Tuple[int, int], str]]:
+    """运行唯一的 sample，并返回日志路径和解析后的 tile。"""
+    stdout_log = RESULTS_DIR / "simulation.log"
+    stderr_log = RESULTS_DIR / "simulation_stderr.log"
+    wave_file = RESULTS_DIR / "conv_subsystem_tb.vcd"
 
-    返回:
-        - 该样本的 stdout 日志路径
-        - 从日志中解析得到的 tile 字典
-    """
-    stdout_log = RESULTS_DIR / f"simulation_sample_{sample_id:03d}.log"
-    stderr_log = RESULTS_DIR / f"simulation_sample_{sample_id:03d}_stderr.log"
-    wave_file = RESULTS_DIR / (
-        "conv_subsystem_tb.vcd" if sample_id == 0 else f"conv_subsystem_tb_sample_{sample_id:03d}.vcd"
-    )
-
+    # testbench 仍然通过 plusargs 接收路径和 sample id，但这里 sample id 固定为 0。
     cmd = [
         "vvp",
         str(vvp_path.resolve()),
-        # 以下是 testbench 需要的参数，全部通过 +var=value 形式传递
-        f"+PREP_DIR={PREP_DIR.resolve()}",   # 预处理数据根目录，例如 prepared_conv_test
-        f"+SAMPLE_ID={sample_id}",
+        f"+PREP_DIR={PREP_DIR.resolve()}",
         f"+WAVE_FILE={wave_file.resolve()}",
         "+TIMEOUT_CYCLES=4000",
         f"+WAVE={1 if enable_wave else 0}",
     ]
 
+    # 利用 vvp 工具运行仿真，日志分别在 simulation.log 和 simulation_stderr.log
     result = run_cmd(cmd, cwd=TEST_DIR, stdout_path=stdout_log, stderr_path=stderr_log)
     if result.returncode != 0:
-        raise RuntimeError(f"样本 {sample_id} 仿真失败，请检查 {stdout_log.name} / {stderr_log.name}")
-    # stdout_log 为标准输出日志
-    # parse_sim_tiles 会把 TILE 行解析成一个字典，key=(pos, group)，value=tile_hex_str
+        raise RuntimeError(
+            f"Simulation for sample failed, check {stdout_log.name} / {stderr_log.name}"
+        )
     return stdout_log, parse_sim_tiles(stdout_log)
 
 
-def compare_sample(sample_id: int, sim_tiles: Dict[Tuple[int, int], str]) -> List[str]:
-    """
-    将仿真输出与黄金值逐 token 比较。
-
-    返回:
-        mismatch 字符串列表；为空表示该样本匹配成功
-    """
-    # 解析黄金 tile 文件，得到同样格式的字典，便于直接比对
-    golden_tiles = load_golden_tiles(sample_id)
-
+def compare_sample(sim_tiles: Dict[Tuple[int, int], str]) -> List[str]:
+    """把仿真输出和 golden tile 逐 token 对比，返回 mismatch 列表。"""
+    # 加载正确数据
+    golden_tiles = load_golden_tiles()
+    # 存储不匹配数据的列表
     mismatches: List[str] = []
 
     if len(sim_tiles) != TOKEN_COUNT:
-        mismatches.append(f"sample {sample_id}: tile count got {len(sim_tiles)}, expected {TOKEN_COUNT}")
+        mismatches.append(f"tile count got {len(sim_tiles)}, expected {TOKEN_COUNT}")
 
-    for pos in range(9):
+    # 72 个 token = 9 个 pos x 8 个 group。
+    for pos in range(POS_COUNT):
         for group in range(GROUP_COUNT):
-            key = (pos, group) # 获取 token 唯一标识
-            sim_value = sim_tiles.get(key) # 获取仿真值
-            golden_value = golden_tiles.get(key) # 获取标准值
+            key = (pos, group)
+            sim_value = sim_tiles.get(key)
+            golden_value = golden_tiles.get(key)
             if sim_value is None:
-                mismatches.append(f"sample {sample_id}: missing tile pos={pos} group={group}")
+                mismatches.append(f"missing tile pos={pos} group={group}")
             elif golden_value is None:
-                mismatches.append(f"sample {sample_id}: golden missing pos={pos} group={group}")
+                mismatches.append(f"golden missing pos={pos} group={group}")
             elif tile_has_unknown(sim_value):
                 mismatches.append(
-                    f"sample {sample_id}: unknown tile pos={pos} group={group}\n"
+                    f"Unknown tile pos={pos} group={group}\n"
                     f"  sim   = {sim_value}\n"
                     f"  golden= {golden_value}"
                 )
+                # Python 特性：隐式字符串字面量拼接，即如果多个字符串面值（包括 f-string）相邻放置，中间只有空格、换行或缩进，Python 解析器会自动将它们合并成一个完整的长字符串。
             elif sim_value != golden_value:
                 mismatches.append(
-                    f"sample {sample_id}: mismatch pos={pos} group={group}\n"
+                    f"Mismatch pos={pos} group={group}\n"
                     f"  sim   = {sim_value}\n"
                     f"  golden= {golden_value}"
                 )
@@ -291,24 +242,17 @@ def compare_sample(sample_id: int, sim_tiles: Dict[Tuple[int, int], str]) -> Lis
 
 
 def write_reports(summary: dict, mismatches: List[str]) -> None:
-    """
-    写出本次运行的总结和 mismatch 报告。
-    """
+    """写出 summary.json 和 mismatch_report.txt。"""
     (RESULTS_DIR / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     report_text = "all samples matched\n" if not mismatches else "\n\n".join(mismatches) + "\n"
     (RESULTS_DIR / "mismatch_report.txt").write_text(report_text, encoding="utf-8")
-
-
-def format_sample_ids(sample_ids: List[int]) -> str:
-    """Format sample id list for terminal output."""
-    return ", ".join(str(sample_id) for sample_id in sample_ids) if sample_ids else "None"
-
+ 
 
 def add_box_field(lines: List[str], label: str, value: str, wrap_width: int = 54) -> None:
-    """Append a wrapped key/value field into the terminal summary box."""
+    """给终端摘要框追加一个自动换行的字段。"""
     prefix = f"{label:<12}: "
     wrapped = textwrap.wrap(value, width=wrap_width) or ["None"]
     lines.append(prefix + wrapped[0])
@@ -316,7 +260,7 @@ def add_box_field(lines: List[str], label: str, value: str, wrap_width: int = 54
 
 
 def print_summary_box(title: str, fields: List[Tuple[str, str]]) -> None:
-    """Print a dashed terminal box with aligned summary fields."""
+    """打印最终通过/失败摘要框。"""
     lines: List[str] = [title, ""]
     for label, value in fields:
         add_box_field(lines, label, value)
@@ -330,68 +274,51 @@ def print_summary_box(title: str, fields: List[Tuple[str, str]]) -> None:
 
 
 def main() -> int:
-    """
-    主流程:
-        1. 解析参数
-        2. 准备 results 目录
-        3. 预处理数据
-        4. 编译 testbench
-        5. 逐样本仿真
-        6. 逐样本比对
-        7. 输出总结
-    """
+    """单样本测试主流程。"""
+    # 1. 加载命令行参数
     args = parse_args()
-
-    # 建立 results 目录，并根据参数决定是否清理旧内容
+    # 2. 准备 results 目录
     ensure_results_dir(args.keep_build)
-
-    # 调用 data/prepare_conv_test_data.py 生成预处理数据
-    preprocess_data(args.start_index, args.sample_count)
-    
-    # 利用 iverilog 工具编译 Source RTL and Testbench，生成 vvp 可执行文件
+    # 3. 预处理数据，生成 mem 文件（只有一个测试样本）
+    preprocess_data()
+    # 4. 利用 iverilog 工具编译，得到 vvp 可执行文件
     vvp_path = compile_testbench()
+    # 5. 利用 vvp 工具运行仿真，得到标准输出日志以及解析后的输出数据（字典）
+    stdout_log, sim_tiles = run_single_sample(vvp_path, args.wave)
+    # 如果仿真成功，stdout_log 就是输出数据
 
-    all_mismatches: List[str] = []
-    sample_summaries = []
-    for sample_id in range(args.start_index, args.start_index + args.sample_count):
-        # 运行 vvp，得到该样本的仿真日志路径和解析出的 tile 字典(key = (pos, group)，value=tile_hex_str)
-        stdout_log, sim_tiles = run_single_sample(vvp_path, sample_id, args.wave)
-        # mimatches 是字符串列表，存储每个 token 的对比结果（如果不匹配才存储）
-        mismatches = compare_sample(sample_id, sim_tiles)
-        all_mismatches.extend(mismatches) # 如果完全匹配，这个列表就是空的
-        sample_summaries.append(
-            {
-                "sample_id": sample_id,
-                "tile_count": len(sim_tiles),
-                "log": stdout_log.name,
-                "matched": len(mismatches) == 0,
-            }
-        )
+    # 6. 对比仿真结果与标准结果，存放到列表 mismatches 中
+    mismatches = compare_sample(sim_tiles)
+    # 7. 如果仿真结果全部正确，mismatches 列表应该是空的
+    matched = len(mismatches) == 0
 
+    # 8. 汇总仿真结果
     summary = {
-        "start_index": args.start_index,
-        "sample_count": args.sample_count,
+        "sample_count": 1,
         "wave_enabled": args.wave,
         "prepared_dir": str(PREP_DIR.resolve()),
         "vvp_path": str(vvp_path.resolve()),
-        "samples": sample_summaries,
-        "mismatch_count": len(all_mismatches),
+        "samples": [
+            {
+                "tile_count": len(sim_tiles),
+                "log": stdout_log.name,
+                "matched count": len(sim_tiles) - len(mismatches),
+                "matched": matched,
+            }
+        ],
+        "mismatch_count": len(mismatches),
     }
-    write_reports(summary, all_mismatches)
+    # 9. 整理报告：仿真结果，不匹配列表
+    write_reports(summary, mismatches)
 
-    total_samples = args.sample_count
-    passed_sample_ids = [item["sample_id"] for item in sample_summaries if item["matched"]]
-    failed_sample_ids = [item["sample_id"] for item in sample_summaries if not item["matched"]]
-
-    if all_mismatches:
+    if mismatches:
         print_summary_box(
             "T_T  Conv testbench result: FAILED",
             [
-                ("Total tests", str(total_samples)),
-                ("Passed count", str(len(passed_sample_ids))),
-                ("Passed IDs", format_sample_ids(passed_sample_ids)),
-                ("Failed count", str(len(failed_sample_ids))),
-                ("Failed IDs", format_sample_ids(failed_sample_ids)),
+                ("Total tests", "1"),
+                ("Passed count", "0"),
+                ("Passed IDs", "None"),
+                ("Failed count", "1"),
                 ("Full report", "mismatch_report.txt"),
             ],
         )
@@ -400,11 +327,10 @@ def main() -> int:
     print_summary_box(
         "^_^  Conv testbench result: PASSED",
         [
-            ("Total tests", str(total_samples)),
-            ("Passed count", str(len(passed_sample_ids))),
-            ("Passed IDs", format_sample_ids(passed_sample_ids)),
-            ("Failed count", str(len(failed_sample_ids))),
-            ("Failed IDs", format_sample_ids(failed_sample_ids)),
+            ("Total tests", "1"),
+            ("Passed count", "1"),
+            ("Failed count", "0"),
+            ("Failed IDs", "None"),
         ],
     )
     return 0

@@ -1,24 +1,22 @@
 `timescale 1ns / 1ps
 
 /*
- * 模块名称: conv_subsystem_tb
+ * 模块名称: conv_dwconv_tb
  * 作者: SonicBolt 团队
  * 日期: 2026-03-29
- * 版本: v2.4
+ * 版本: v1.0
  *
  * 功能概述:
- *   面向当前 conv_subsystem 的自检 testbench。
+ *   级联 Conv 子系统以及 DWConv 子系统的自检 testbench
  *   这份 testbench 负责：
- *   1. 从预处理后的 mem 文件中加载单样本输入、整层权重和偏置
- *   2. 通过 conv_subsystem 顶层写口依次装载参数与输入图
- *   3. 启动一次 Conv1 计算，并捕获输出 TILE 日志
+ *   1. 从预处理后的 mem 文件中加载单样本输入、两个模块的整层权重和偏置
+ *   2. 通过 conv_subsystem, dwconv_subsystem 顶层写口依次装载参数/输入图
+ *   3. 启动一次 Conv-DWConv 计算，并捕获输出 TILE 日志
  *   4. 检查输出 token 数以及输出流是否出现中断
  *
  * 当前版本说明:
- *   - 当前 Conv1 采用 `9 个 pos x 8 个 group = 72 个 token`
- *   - 每个 token 对应一个 `4ch x 4x4 x 8bit = 512bit` 输出 tile
- *   - 当前 testbench 采用单帧缓存流程：先装载完整输入图，再启动计算
- *   - 相比 v2.3, v2.4 删除了夏优握手信号，增添了下游第二层启动信号 fire
+ *   - 当前 Conv 采用 `9 个 pos x 8 个 group = 72 个 token`
+ *   - 每个 token 对应一个 `4ch x 2 x 2 x 8bit = 128bit` 输出 tile
  *
  * 日志格式:
  *   - 每个有效 tile 输出一行：
@@ -27,7 +25,7 @@
  *       SAMPLE_DONE sample=<n> cycles=<c>
  */
 
-module conv_subsystem_tb #(
+module conv_dwconv_tb #(
     parameter integer ENABLE_WAVE = 0
 ) ();
 
@@ -71,11 +69,12 @@ module conv_subsystem_tb #(
     wire [511:0] out_stream_data;
 
     // 本地测试数据缓存数组。
-    reg [79:0]  input_rows_mem        [0:INPUT_ROW_COUNT-1];
-    reg [223:0] conv_weight_words_mem [0:WEIGHT_WORD_COUNT-1];
-    reg [63:0]  conv_bias_words_mem   [0:BIAS_WORD_COUNT-1];
+    reg [79:0]  input_rows_mem [0:INPUT_ROW_COUNT-1];
+    reg [223:0] weight_words_mem [0:WEIGHT_WORD_COUNT-1];
+    reg [63:0]  bias_words_mem [0:BIAS_WORD_COUNT-1];
 
     // 仿真流程控制变量。
+    integer sample_id;
     integer timeout_cycles;
     integer cycle_counter;
     integer tile_counter;
@@ -90,8 +89,8 @@ module conv_subsystem_tb #(
     // 文件路径相关字符串，由 plusargs 拼出。
     string prep_dir;
     string input_mem_path;
-    string conv_weight_mem_path;
-    string conv_bias_mem_path;
+    string weight_mem_path;
+    string bias_mem_path;
     string wave_file_path;
 
     // DUT 实例。
@@ -153,12 +152,16 @@ module conv_subsystem_tb #(
         begin
             prep_dir = "";
             wave_file_path = "";
+            sample_id = 0;
             timeout_cycles = 4000;
             runtime_wave_enable = ENABLE_WAVE;
 
             if (!$value$plusargs("PREP_DIR=%s", prep_dir)) begin
                 $display("TB_ERROR missing +PREP_DIR");
                 $finish_and_return(2);
+            end
+            if (!$value$plusargs("SAMPLE_ID=%d", sample_id)) begin
+                sample_id = 0;
             end
             if ($value$plusargs("TIMEOUT_CYCLES=%d", timeout_cycles)) begin
             end
@@ -171,9 +174,9 @@ module conv_subsystem_tb #(
                 wave_file_path = "conv_subsystem_tb.vcd";
             end
 
-            input_mem_path       = $sformatf("%0s/samples/sample_input_rows.mem", prep_dir);
-            conv_weight_mem_path = $sformatf("%0s/conv_weights/weight_words.mem", prep_dir);
-            conv_bias_mem_path   = $sformatf("%0s/conv_bias/bias_words.mem", prep_dir);
+            input_mem_path  = $sformatf("%0s/samples/sample_%03d_input_rows.mem", prep_dir, sample_id);
+            weight_mem_path = $sformatf("%0s/weights/weight_words.mem", prep_dir);
+            bias_mem_path   = $sformatf("%0s/bias/bias_words.mem", prep_dir);
         end
     endtask
 
@@ -181,8 +184,8 @@ module conv_subsystem_tb #(
     task automatic load_memories;
         begin
             $readmemh(input_mem_path, input_rows_mem);
-            $readmemh(conv_weight_mem_path, conv_weight_words_mem);
-            $readmemh(conv_bias_mem_path, conv_bias_words_mem);
+            $readmemh(weight_mem_path, weight_words_mem);
+            $readmemh(bias_mem_path, bias_words_mem);
         end
     endtask
 
@@ -195,7 +198,7 @@ module conv_subsystem_tb #(
         end
     endtask
 
-    // 逐 word 装载 Conv1 整层权重。
+    // 逐 word 装载 Conv 整层权重。
     task automatic load_weights;
         begin
             for (weight_idx = 0; weight_idx < WEIGHT_WORD_COUNT; weight_idx = weight_idx + 1) begin
@@ -203,7 +206,7 @@ module conv_subsystem_tb #(
                 weight_wr_en <= 1'b1;
                 weight_wr_bank <= weight_idx / 8;
                 weight_wr_addr <= weight_idx % 8;
-                weight_wr_data <= conv_weight_words_mem[weight_idx];
+                weight_wr_data <= weight_words_mem[weight_idx];
             end
             @(posedge clk);
             weight_wr_en <= 1'b0;
@@ -213,7 +216,7 @@ module conv_subsystem_tb #(
         end
     endtask
 
-    // 逐 word 装载 Conv1 整层偏置。
+    // 逐 word 装载 Conv 整层偏置。
     task automatic load_bias;
         begin
             for (bias_idx = 0; bias_idx < BIAS_WORD_COUNT; bias_idx = bias_idx + 1) begin
@@ -221,7 +224,7 @@ module conv_subsystem_tb #(
                 bias_wr_en <= 1'b1;
                 bias_wr_bank <= 1'b0;
                 bias_wr_addr <= bias_idx[2:0];
-                bias_wr_data <= conv_bias_words_mem[bias_idx];
+                bias_wr_data <= bias_words_mem[bias_idx];
             end
             @(posedge clk);
             bias_wr_en <= 1'b0;
@@ -267,7 +270,7 @@ module conv_subsystem_tb #(
             while (!done) begin
                 @(posedge clk);
                 if (cycle_counter > timeout_cycles) begin
-                    $display("TB_ERROR timeout  cycles=%0d", cycle_counter);
+                    $display("TB_ERROR timeout sample=%0d cycles=%0d", sample_id, cycle_counter);
                     $finish_and_return(3);
                 end
             end
@@ -287,7 +290,8 @@ module conv_subsystem_tb #(
             if (out_stream_valid) begin
                 tile_counter <= tile_counter + 1;
                 seen_first_tile <= 1'b1;
-                $display("TILE pos=%0d group=%0d data=%0128x", out_stream_pos, out_stream_group, out_stream_data);
+                $display("TILE sample=%0d pos=%0d group=%0d data=%0128x",
+                    sample_id, out_stream_pos, out_stream_group, out_stream_data);
             end else if (seen_first_tile && (tile_counter < TOKEN_COUNT) && !done) begin
                 stream_gap_error <= 1'b1;
             end
@@ -320,16 +324,17 @@ module conv_subsystem_tb #(
         wait_done_or_timeout();
 
         if (tile_counter !== TOKEN_COUNT) begin
-            $display("TB_ERROR tile_count got=%0d expected=%0d", tile_counter, TOKEN_COUNT);
+            $display("TB_ERROR tile_count sample=%0d got=%0d expected=%0d",
+                sample_id, tile_counter, TOKEN_COUNT);
             $finish_and_return(4);
         end
 
         if (stream_gap_error) begin
-            $display("TB_ERROR stream_gap");
+            $display("TB_ERROR stream_gap sample=%0d", sample_id);
             $finish_and_return(5);
         end
 
-        $display("SAMPLE_DONE cycles=%0d", cycle_counter);
+        $display("SAMPLE_DONE sample=%0d cycles=%0d", sample_id, cycle_counter);
         $finish_and_return(0);
     end
 
