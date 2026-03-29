@@ -47,6 +47,7 @@ module dwconv_core #(
 
     // ---------- 输出数据流接口 ----------
     output wire          out_stream_valid,         // 输出元数据：有效  
+    output wire          out_stream_last,          // 输出元数据：last
     output wire [3:0]    out_stream_pos,           // 输出元数据：位置
     output wire [2:0]    out_stream_group,         // 输出元数据：通道组  
     output wire [127:0]  out_stream_data           // 输出数据：量化后的 tile 数据

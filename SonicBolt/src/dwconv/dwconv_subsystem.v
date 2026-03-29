@@ -50,8 +50,8 @@ module dwconv_subsystem #(
     input  wire [63:0]   bias_wr_data,     // 1 个偏置 word = 4 x INT16 = 64bit
 
     // ------------ 输出数据流接口 ------------
-    input  wire          out_stream_ready, // 预留的下游 ready，当前版本默认视作常高
     output wire          out_stream_valid, // 输出 tile 有效
+    output wire          out_stream_last,  // 输出 tile 是否是最后一个
     output wire [3:0]    out_stream_pos,   // 输出 tile 的 pos 编号
     output wire [2:0]    out_stream_group, // 输出 tile 的 group 编号
     output wire [127:0]  out_stream_data   // 输出 tile 数据，4 x 2 x 2 x 8bit = 128bit
@@ -70,6 +70,7 @@ module dwconv_subsystem #(
     wire [63:0]   bias_data_bus;           // 偏置 SRAM 读出数据总线
 
     wire          tile_valid_int;          // DWConv 输出元数据：有效  
+    wire          tile_last_int;           // DWConv 输出元数据：最后
     wire [3:0]    tile_pos_int;            // DWConv 输出元数据：位置
     wire [2:0]    tile_group_int;          // DWConv 输出元数据：通道组  
     wire [127:0]  tile_data_int;           // DWConv 输出数据：量化后的 tile 数据 
@@ -140,12 +141,14 @@ module dwconv_subsystem #(
 
         // ---------- 输出数据流接口 ----------
         .out_stream_valid(tile_valid_int),     // out: 输出元数据：有效
+        .out_stream_last(tile_last_int),
         .out_stream_pos(tile_pos_int),         // out: 输出元数据：位置
         .out_stream_group(tile_group_int),     // out: 输出元数据：通道组
         .out_stream_data(tile_data_int)        // out: 输出数据：量化后的 tile 数据
     );
 
     assign out_stream_valid = tile_valid_int;
+    assign out_stream_last = tile_last_int;    
     assign out_stream_pos   = tile_pos_int;
     assign out_stream_group = tile_group_int;
     assign out_stream_data  = tile_data_int;

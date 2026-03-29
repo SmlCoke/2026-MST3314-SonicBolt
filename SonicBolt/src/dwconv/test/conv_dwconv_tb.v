@@ -7,20 +7,20 @@
  * 版本: v1.0
  *
  * 功能概述:
- *   级联 Conv 子系统以及 DWConv 子系统的自检 testbench
+ *   面向当前 conv_subsystem + dwconv_subsystem的自检 testbench。
  *   这份 testbench 负责：
- *   1. 从预处理后的 mem 文件中加载单样本输入、两个模块的整层权重和偏置
- *   2. 通过 conv_subsystem, dwconv_subsystem 顶层写口依次装载参数/输入图
- *   3. 启动一次 Conv-DWConv 计算，并捕获输出 TILE 日志
+ *   1. 从预处理后的 mem 文件中加载单样本输入、整层权重和偏置
+ *   2. 通过 conv_subsystem 顶层写口依次装载参数与输入图
+ *   3. 启动一次 Conv + DWConv 计算，并捕获输出 TILE 日志
  *   4. 检查输出 token 数以及输出流是否出现中断
  *
  * 当前版本说明:
  *   - 当前 Conv 采用 `9 个 pos x 8 个 group = 72 个 token`
- *   - 每个 token 对应一个 `4ch x 2 x 2 x 8bit = 128bit` 输出 tile
+ *   - 每个 token 对应一个 `4ch x 4x4 x 8bit = 512bit` 输出 tile
+ *   - 当前 testbench 采用单帧缓存流程：先装载完整输入图，再启动计算
  *
  * 日志格式:
  *   - 每个有效 tile 输出一行：
- *       TILE sample=<n> pos=<p> group=<g> data=<128hex>
  *   - 一个样本结束后输出：
  *       SAMPLE_DONE sample=<n> cycles=<c>
  */
@@ -32,8 +32,16 @@ module conv_dwconv_tb #(
     // 基本仿真参数。
     localparam integer CLK_HALF_PERIOD   = 5;
     localparam integer INPUT_ROW_COUNT   = 30;
-    localparam integer WEIGHT_WORD_COUNT = 88;
-    localparam integer BIAS_WORD_COUNT   = 8;
+
+    // Conv层权重/偏置 mem depth
+    localparam integer CONV_WEIGHT_WORD_COUNT = 88;
+    localparam integer CONV_BIAS_WORD_COUNT   = 8;
+    
+    // DWConv 层权重/偏置 mem depth
+    localparam integer DWCONV_WEIGHT_WORD_COUNT = 24;
+    localparam integer DWCONV_BIAS_WORD_COUNT   = 8;
+
+    // Token 计数
     localparam integer TOKEN_COUNT       = 72;
 
     // DUT 顶层控制与状态信号。
@@ -49,38 +57,67 @@ module conv_dwconv_tb #(
     reg [39:0] img_wr_data_lo;
     reg [39:0] img_wr_data_hi;
 
-    // 权重写口：11 个 bank x 8 个 group = 88 个 224bit word。
-    reg weight_wr_en;
-    reg [4:0] weight_wr_bank;
-    reg [2:0] weight_wr_addr;
-    reg [223:0] weight_wr_data;
+    // Conv权重写口：11 个 bank x 8 个 group = 88 个 224bit word。
+    reg conv_weight_wr_en;
+    reg [4:0] conv_weight_wr_bank;
+    reg [2:0] conv_weight_wr_addr;
+    reg [223:0] conv_weight_wr_data;
 
-    // 偏置写口：1 个 bank x 8 个 group = 8 个 64bit word。
-    reg bias_wr_en;
-    reg bias_wr_bank;
-    reg [2:0] bias_wr_addr;
-    reg [63:0] bias_wr_data;
+    // Conv偏置写口：1 个 bank x 8 个 group = 8 个 64bit word。
+    reg conv_bias_wr_en;
+    reg conv_bias_wr_bank;
+    reg [2:0] conv_bias_wr_addr;
+    reg [63:0] conv_bias_wr_data;
 
-    // 主输出流接口：每拍最多输出一个 512bit tile。
-    wire out_stream_valid;
-    wire out_stream_fire;
-    wire [3:0] out_stream_pos;
-    wire [2:0] out_stream_group;
-    wire [511:0] out_stream_data;
+    // DWConv权重写口：3 个 bank x 8 个 group = 24 个 96bit word。
+    reg dwconv_weight_wr_en;
+    reg [1:0] dwconv_weight_wr_bank;
+    reg [2:0] dwconv_weight_wr_addr;
+    reg [95:0] dwconv_weight_wr_data;
+
+    // DWConv偏置写口：1 个 bank x 8 个 group = 8 个 64bit word。
+    reg dwconv_bias_wr_en;
+    reg dwconv_bias_wr_bank;
+    reg [2:0] dwconv_bias_wr_addr;
+    reg [63:0] dwconv_bias_wr_data;
+
+    // Conv输出流接口：每拍最多输出一个 512bit tile。
+    wire conv_out_stream_valid;
+    wire conv_out_stream_last;
+    wire conv_out_stream_fire;
+    wire [3:0] conv_out_stream_pos;
+    wire [2:0] conv_out_stream_group;
+    wire [511:0] conv_out_stream_data;
+
+    // DWConv输出流接口：每拍最多输出一个 128bit tile。
+    wire dwconv_out_stream_valid;
+    wire dwconv_out_stream_last;
+    wire dwconv_out_stream_fire;
+    wire [3:0] dwconv_out_stream_pos;
+    wire [2:0] dwconv_out_stream_group;
+    wire [127:0] dwconv_out_stream_data;
 
     // 本地测试数据缓存数组。
-    reg [79:0]  input_rows_mem [0:INPUT_ROW_COUNT-1];
-    reg [223:0] weight_words_mem [0:WEIGHT_WORD_COUNT-1];
-    reg [63:0]  bias_words_mem [0:BIAS_WORD_COUNT-1];
+    reg [79:0]  input_rows_mem        [0:INPUT_ROW_COUNT-1];
+    // Conv 层权重
+    reg [223:0] conv_weight_words_mem [0:CONV_WEIGHT_WORD_COUNT-1];
+    // Conv 层偏置
+    reg [63:0]  conv_bias_words_mem   [0:CONV_BIAS_WORD_COUNT-1];
+
+    // DWConv 层权重
+    reg [95:0] dwconv_weight_words_mem [0:DWCONV_WEIGHT_WORD_COUNT-1];
+    // DWConv 层偏置
+    reg [63:0]  dwconv_bias_words_mem   [0:DWCONV_BIAS_WORD_COUNT-1];
 
     // 仿真流程控制变量。
-    integer sample_id;
     integer timeout_cycles;
     integer cycle_counter;
     integer tile_counter;
     integer row_idx;
-    integer weight_idx;
-    integer bias_idx;
+    integer conv_weight_idx;
+    integer conv_bias_idx;
+    integer dwconv_weight_idx;
+    integer dwconv_bias_idx;
     integer runtime_wave_enable;
 
     reg seen_first_tile;
@@ -89,12 +126,14 @@ module conv_dwconv_tb #(
     // 文件路径相关字符串，由 plusargs 拼出。
     string prep_dir;
     string input_mem_path;
-    string weight_mem_path;
-    string bias_mem_path;
+    string conv_weight_mem_path;
+    string conv_bias_mem_path;
+    string dwconv_weight_mem_path;
+    string dwconv_bias_mem_path;
     string wave_file_path;
 
-    // DUT 实例。
-    conv_subsystem dut (
+    // Conv 实例
+    conv_subsystem conv (
         .clk(clk),
         .rst_n(rst_n),
         .start(start),
@@ -104,19 +143,47 @@ module conv_dwconv_tb #(
         .img_wr_addr(img_wr_addr),
         .img_wr_data_lo(img_wr_data_lo),
         .img_wr_data_hi(img_wr_data_hi),
-        .weight_wr_en(weight_wr_en),
-        .weight_wr_bank(weight_wr_bank),
-        .weight_wr_addr(weight_wr_addr),
-        .weight_wr_data(weight_wr_data),
-        .bias_wr_en(bias_wr_en),
-        .bias_wr_bank(bias_wr_bank),
-        .bias_wr_addr(bias_wr_addr),
-        .bias_wr_data(bias_wr_data),
-        .out_stream_valid(out_stream_valid),
-        .out_stream_pos(out_stream_pos),
-        .out_stream_group(out_stream_group),
-        .out_stream_fire(out_stream_fire),
-        .out_stream_data(out_stream_data)
+        .weight_wr_en(conv_weight_wr_en),
+        .weight_wr_bank(conv_weight_wr_bank),
+        .weight_wr_addr(conv_weight_wr_addr),
+        .weight_wr_data(conv_weight_wr_data),
+        .bias_wr_en(conv_bias_wr_en),
+        .bias_wr_bank(conv_bias_wr_bank),
+        .bias_wr_addr(conv_bias_wr_addr),
+        .bias_wr_data(conv_bias_wr_data),
+        .out_stream_valid(conv_out_stream_valid),
+        .out_stream_last(conv_out_stream_last),
+        .out_stream_pos(conv_out_stream_pos),
+        .out_stream_group(conv_out_stream_group),
+        .out_stream_fire(conv_out_stream_fire),
+        .out_stream_data(conv_out_stream_data)
+    );
+
+    // Conv 实例。
+    dwconv_subsystem dwconv (
+        .clk(clk),
+        .rst_n(rst_n),
+
+        .in_stream_valid(conv_out_stream_valid),
+        .in_stream_last(conv_out_stream_last),
+        .in_stream_pos(conv_out_stream_pos),
+        .in_stream_group(conv_out_stream_group),
+        .in_stream_fire(conv_out_stream_fire),
+        .in_stream_data(conv_out_stream_data),
+        
+        .weight_wr_en(dwconv_weight_wr_en),
+        .weight_wr_bank(dwconv_weight_wr_bank),
+        .weight_wr_addr(dwconv_weight_wr_addr),
+        .weight_wr_data(dwconv_weight_wr_data),
+        .bias_wr_en(dwconv_bias_wr_en),
+        .bias_wr_bank(dwconv_bias_wr_bank),
+        .bias_wr_addr(dwconv_bias_wr_addr),
+        .bias_wr_data(dwconv_bias_wr_data),
+        .out_stream_valid(dwconv_out_stream_valid),
+        .out_stream_last(dwconv_out_stream_last),
+        .out_stream_pos(dwconv_out_stream_pos),
+        .out_stream_group(dwconv_out_stream_group),
+        .out_stream_data(dwconv_out_stream_data)
     );
 
     // 生成时钟，默认 10ns 一个周期。
@@ -132,14 +199,25 @@ module conv_dwconv_tb #(
             img_wr_addr = 5'd0;
             img_wr_data_lo = 40'd0;
             img_wr_data_hi = 40'd0;
-            weight_wr_en = 1'b0;
-            weight_wr_bank = 5'd0;
-            weight_wr_addr = 3'd0;
-            weight_wr_data = 224'd0;
-            bias_wr_en = 1'b0;
-            bias_wr_bank = 1'b0;
-            bias_wr_addr = 3'd0;
-            bias_wr_data = 64'd0;
+
+            conv_weight_wr_en = 1'b0;
+            conv_weight_wr_bank = 5'd0;
+            conv_weight_wr_addr = 3'd0;
+            conv_weight_wr_data = 224'd0;
+            conv_bias_wr_en = 1'b0;
+            conv_bias_wr_bank = 1'b0;
+            conv_bias_wr_addr = 3'd0;
+            conv_bias_wr_data = 64'd0;
+
+            dwconv_weight_wr_en = 1'b0;
+            dwconv_weight_wr_bank = 2'd0;
+            dwconv_weight_wr_addr = 3'd0;
+            dwconv_weight_wr_data = 96'd0;
+            dwconv_bias_wr_en = 1'b0;
+            dwconv_bias_wr_bank = 1'b0;
+            dwconv_bias_wr_addr = 3'd0;
+            dwconv_bias_wr_data = 64'd0;
+
             cycle_counter = 0;
             tile_counter = 0;
             seen_first_tile = 1'b0;
@@ -152,16 +230,12 @@ module conv_dwconv_tb #(
         begin
             prep_dir = "";
             wave_file_path = "";
-            sample_id = 0;
             timeout_cycles = 4000;
             runtime_wave_enable = ENABLE_WAVE;
 
             if (!$value$plusargs("PREP_DIR=%s", prep_dir)) begin
                 $display("TB_ERROR missing +PREP_DIR");
                 $finish_and_return(2);
-            end
-            if (!$value$plusargs("SAMPLE_ID=%d", sample_id)) begin
-                sample_id = 0;
             end
             if ($value$plusargs("TIMEOUT_CYCLES=%d", timeout_cycles)) begin
             end
@@ -174,9 +248,12 @@ module conv_dwconv_tb #(
                 wave_file_path = "conv_subsystem_tb.vcd";
             end
 
-            input_mem_path  = $sformatf("%0s/samples/sample_%03d_input_rows.mem", prep_dir, sample_id);
-            weight_mem_path = $sformatf("%0s/weights/weight_words.mem", prep_dir);
-            bias_mem_path   = $sformatf("%0s/bias/bias_words.mem", prep_dir);
+            input_mem_path         = $sformatf("%0s/samples/sample_input_rows.mem", prep_dir);
+            conv_weight_mem_path   = $sformatf("%0s/conv_weights/weight_words.mem", prep_dir);
+            conv_bias_mem_path     = $sformatf("%0s/conv_bias/bias_words.mem", prep_dir);
+            dwconv_weight_mem_path = $sformatf("%0s/dwconv_weights/weight_words.mem", prep_dir);
+            dwconv_bias_mem_path   = $sformatf("%0s/dwconv_bias/bias_words.mem", prep_dir);
+
         end
     endtask
 
@@ -184,12 +261,14 @@ module conv_dwconv_tb #(
     task automatic load_memories;
         begin
             $readmemh(input_mem_path, input_rows_mem);
-            $readmemh(weight_mem_path, weight_words_mem);
-            $readmemh(bias_mem_path, bias_words_mem);
+            $readmemh(conv_weight_mem_path, conv_weight_words_mem);
+            $readmemh(conv_bias_mem_path, conv_bias_words_mem);
+            $readmemh(dwconv_weight_mem_path, dwconv_weight_words_mem);
+            $readmemh(dwconv_bias_mem_path, dwconv_bias_words_mem);
         end
     endtask
 
-    // 对 DUT 施加同步释放的低有效复位。
+    // 对电路施加同步释放的低有效复位。
     task automatic apply_reset;
         begin
             repeat (4) @(posedge clk);
@@ -201,36 +280,62 @@ module conv_dwconv_tb #(
     // 逐 word 装载 Conv 整层权重。
     task automatic load_weights;
         begin
-            for (weight_idx = 0; weight_idx < WEIGHT_WORD_COUNT; weight_idx = weight_idx + 1) begin
+            for (conv_weight_idx = 0; conv_weight_idx < CONV_WEIGHT_WORD_COUNT; conv_weight_idx = conv_weight_idx + 1) begin
                 @(posedge clk);
-                weight_wr_en <= 1'b1;
-                weight_wr_bank <= weight_idx / 8;
-                weight_wr_addr <= weight_idx % 8;
-                weight_wr_data <= weight_words_mem[weight_idx];
+                conv_weight_wr_en <= 1'b1;
+                conv_weight_wr_bank <= conv_weight_idx / 8;
+                conv_weight_wr_addr <= conv_weight_idx % 8;
+                conv_weight_wr_data <= conv_weight_words_mem[conv_weight_idx];
             end
             @(posedge clk);
-            weight_wr_en <= 1'b0;
-            weight_wr_bank <= 5'd0;
-            weight_wr_addr <= 3'd0;
-            weight_wr_data <= 224'd0;
+            conv_weight_wr_en <= 1'b0;
+            conv_weight_wr_bank <= 5'd0;
+            conv_weight_wr_addr <= 3'd0;
+            conv_weight_wr_data <= 224'd0;
+
+            for (dwconv_weight_idx = 0; dwconv_weight_idx < DWCONV_WEIGHT_WORD_COUNT; dwconv_weight_idx = dwconv_weight_idx + 1) begin
+                @(posedge clk);
+                dwconv_weight_wr_en <= 1'b1;
+                dwconv_weight_wr_bank <= dwconv_weight_idx / 8;
+                dwconv_weight_wr_addr <= dwconv_weight_idx % 8;
+                dwconv_weight_wr_data <= dwconv_weight_words_mem[dwconv_weight_idx];
+            end
+            @(posedge clk);
+            dwconv_weight_wr_en <= 1'b0;
+            dwconv_weight_wr_bank <= 2'd0;
+            dwconv_weight_wr_addr <= 3'd0;
+            dwconv_weight_wr_data <= 96'd0;
         end
     endtask
 
     // 逐 word 装载 Conv 整层偏置。
     task automatic load_bias;
         begin
-            for (bias_idx = 0; bias_idx < BIAS_WORD_COUNT; bias_idx = bias_idx + 1) begin
+            for (conv_bias_idx = 0; conv_bias_idx < CONV_BIAS_WORD_COUNT; conv_bias_idx = conv_bias_idx + 1) begin
                 @(posedge clk);
-                bias_wr_en <= 1'b1;
-                bias_wr_bank <= 1'b0;
-                bias_wr_addr <= bias_idx[2:0];
-                bias_wr_data <= bias_words_mem[bias_idx];
+                conv_bias_wr_en <= 1'b1;
+                conv_bias_wr_bank <= 1'b0;
+                conv_bias_wr_addr <= conv_bias_idx[2:0];
+                conv_bias_wr_data <= conv_bias_words_mem[conv_bias_idx];
             end
             @(posedge clk);
-            bias_wr_en <= 1'b0;
-            bias_wr_bank <= 1'b0;
-            bias_wr_addr <= 3'd0;
-            bias_wr_data <= 64'd0;
+            conv_bias_wr_en <= 1'b0;
+            conv_bias_wr_bank <= 1'b0;
+            conv_bias_wr_addr <= 3'd0;
+            conv_bias_wr_data <= 64'd0;
+
+            for (dwconv_bias_idx = 0; dwconv_bias_idx < DWCONV_BIAS_WORD_COUNT; dwconv_bias_idx = dwconv_bias_idx + 1) begin
+                @(posedge clk);
+                dwconv_bias_wr_en <= 1'b1;
+                dwconv_bias_wr_bank <= 1'b0;
+                dwconv_bias_wr_addr <= dwconv_bias_idx[2:0];
+                dwconv_bias_wr_data <= dwconv_bias_words_mem[dwconv_bias_idx];
+            end
+            @(posedge clk);
+            dwconv_bias_wr_en <= 1'b0;
+            dwconv_bias_wr_bank <= 1'b0;
+            dwconv_bias_wr_addr <= 3'd0;
+            dwconv_bias_wr_data <= 64'd0;
         end
     endtask
 
@@ -270,7 +375,7 @@ module conv_dwconv_tb #(
             while (!done) begin
                 @(posedge clk);
                 if (cycle_counter > timeout_cycles) begin
-                    $display("TB_ERROR timeout sample=%0d cycles=%0d", sample_id, cycle_counter);
+                    $display("TB_ERROR timeout  cycles=%0d", cycle_counter);
                     $finish_and_return(3);
                 end
             end
@@ -287,11 +392,10 @@ module conv_dwconv_tb #(
             stream_gap_error <= 1'b0;
         end else begin
             cycle_counter <= cycle_counter + 1;
-            if (out_stream_valid) begin
+            if (dwconv_out_stream_valid) begin
                 tile_counter <= tile_counter + 1;
                 seen_first_tile <= 1'b1;
-                $display("TILE sample=%0d pos=%0d group=%0d data=%0128x",
-                    sample_id, out_stream_pos, out_stream_group, out_stream_data);
+                $display("TILE pos=%0d group=%0d data=%032x", dwconv_out_stream_pos, dwconv_out_stream_group, dwconv_out_stream_data);
             end else if (seen_first_tile && (tile_counter < TOKEN_COUNT) && !done) begin
                 stream_gap_error <= 1'b1;
             end
@@ -312,7 +416,7 @@ module conv_dwconv_tb #(
 
         if (runtime_wave_enable != 0) begin
             $dumpfile(wave_file_path);
-            $dumpvars(0, conv_subsystem_tb);
+            $dumpvars(0, conv_dwconv_tb);
         end
 
         load_memories();
@@ -324,17 +428,16 @@ module conv_dwconv_tb #(
         wait_done_or_timeout();
 
         if (tile_counter !== TOKEN_COUNT) begin
-            $display("TB_ERROR tile_count sample=%0d got=%0d expected=%0d",
-                sample_id, tile_counter, TOKEN_COUNT);
+            $display("TB_ERROR tile_count got=%0d expected=%0d", tile_counter, TOKEN_COUNT);
             $finish_and_return(4);
         end
 
         if (stream_gap_error) begin
-            $display("TB_ERROR stream_gap sample=%0d", sample_id);
+            $display("TB_ERROR stream_gap");
             $finish_and_return(5);
         end
 
-        $display("SAMPLE_DONE sample=%0d cycles=%0d", sample_id, cycle_counter);
+        $display("SAMPLE_DONE cycles=%0d", cycle_counter);
         $finish_and_return(0);
     end
 

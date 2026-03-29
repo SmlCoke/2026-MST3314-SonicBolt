@@ -11,18 +11,18 @@
  *   这份 testbench 负责：
  *   1. 从预处理后的 mem 文件中加载单样本输入、整层权重和偏置
  *   2. 通过 conv_subsystem 顶层写口依次装载参数与输入图
- *   3. 启动一次 Conv1 计算，并捕获输出 TILE 日志
+ *   3. 启动一次 Conv 计算，并捕获输出 TILE 日志
  *   4. 检查输出 token 数以及输出流是否出现中断
  *
  * 当前版本说明:
- *   - 当前 Conv1 采用 `9 个 pos x 8 个 group = 72 个 token`
+ *   - 当前 Conv 采用 `9 个 pos x 8 个 group = 72 个 token`
  *   - 每个 token 对应一个 `4ch x 4x4 x 8bit = 512bit` 输出 tile
  *   - 当前 testbench 采用单帧缓存流程：先装载完整输入图，再启动计算
  *   - 相比 v2.3, v2.4 删除了夏优握手信号，增添了下游第二层启动信号 fire
  *
  * 日志格式:
  *   - 每个有效 tile 输出一行：
- *       TILE sample=<n> pos=<p> group=<g> data=<128hex>
+ *       TILE pos=<p> group=<g> data=<128hex>
  *   - 一个样本结束后输出：
  *       SAMPLE_DONE sample=<n> cycles=<c>
  */
@@ -65,6 +65,7 @@ module conv_subsystem_tb #(
 
     // 主输出流接口：每拍最多输出一个 512bit tile。
     wire out_stream_valid;
+    wire out_stream_last;
     wire out_stream_fire;
     wire [3:0] out_stream_pos;
     wire [2:0] out_stream_group;
@@ -114,6 +115,7 @@ module conv_subsystem_tb #(
         .bias_wr_addr(bias_wr_addr),
         .bias_wr_data(bias_wr_data),
         .out_stream_valid(out_stream_valid),
+        .out_stream_last(out_stream_last),
         .out_stream_pos(out_stream_pos),
         .out_stream_group(out_stream_group),
         .out_stream_fire(out_stream_fire),
@@ -195,7 +197,7 @@ module conv_subsystem_tb #(
         end
     endtask
 
-    // 逐 word 装载 Conv1 整层权重。
+    // 逐 word 装载 Conv 整层权重。
     task automatic load_weights;
         begin
             for (weight_idx = 0; weight_idx < WEIGHT_WORD_COUNT; weight_idx = weight_idx + 1) begin
@@ -213,7 +215,7 @@ module conv_subsystem_tb #(
         end
     endtask
 
-    // 逐 word 装载 Conv1 整层偏置。
+    // 逐 word 装载 Conv 整层偏置。
     task automatic load_bias;
         begin
             for (bias_idx = 0; bias_idx < BIAS_WORD_COUNT; bias_idx = bias_idx + 1) begin

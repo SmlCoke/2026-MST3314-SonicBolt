@@ -1,6 +1,6 @@
 ﻿# Conv 子系统架构说明
 
-> 当前系统所属版本：SonicBolt v2.3
+> 当前系统所属版本：SonicBolt v2.4
 
 ## I. 整体架构
 
