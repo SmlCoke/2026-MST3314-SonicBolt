@@ -80,23 +80,41 @@ module dwconv_core #(
     assign weight_rd_group = issue_group;
     assign bias_rd_group = issue_group;
 
+    // 主状态机：
+    // 1. in_stream_fire 拉高后进入 busy (第一个输入token到来时)
+    // 2. 每次 in_stream_valid 推进一个 token
+    // 3. 当量化输出的最后一个 token 出来时拉高 done，并退出 busy
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             // 参数 SRAM 地址信号初始为0，默认指向 group = 0
             issue_group <= 3'b0;
             issue_pos <= 4'b0;
-        end
+            busy <= 1'b0;
+            done <= 1'b0;
+        end else begin
+            done <= 1'b0;
 
-        // 输入 valid 到来时更新 tile 编号组
-        if (in_stream_valid) begin
-            if (issue_group == 3'd7) begin
-                issue_group <= 3'd0;
-                issue_pos   <= issue_pos + 4'd1;
-            end else begin
-                issue_group <= issue_group + 3'd1;
+            // 当第一个输入token到来时(in_stream_fire拉高)，进入busy状态
+            if (in_stream_fire && !busy) begin
+                busy <= 1'b1;
+                issue_group <= 3'b0;
+                issue_pos <= 4'b0;
+            end else if (quant_valid && quant_last) begin
+                // 当量化输出的最后一个token出来时，退出busy并拉高done
+                busy <= 1'b0;
+                done <= 1'b1;
+            end
+
+            // 输入 valid 到来时更新 tile 编号组
+            if (in_stream_valid) begin
+                if (issue_group == 3'd7) begin
+                    issue_group <= 3'd0;
+                    issue_pos   <= issue_pos + 4'd1;
+                end else begin
+                    issue_group <= issue_group + 3'd1;
+                end
             end
         end
-
     end
 
 
@@ -148,10 +166,10 @@ module dwconv_core #(
 
         // ---------- 输出元数据 ---------
         .out_valid(quant_valid),        // out: 输出量化 tile 有效
-        .out_last(quant_last),          // out: 输出量化 tile 是否为最后一个 token  
+        .out_last(quant_last),          // out: 输出量化 tile 是否为最后一个 token
         .out_pos(quant_pos),            // out: 输出 tile 的 pos
         .out_group(quant_group),        // out: 输出 tile 的 group
-        .out_fire(quandt_fire),         // out: 输出的第三层启动信号
+        .out_fire(quant_fire),          // out: 输出的第三层启动信号
 
         // ----------- 输出数据 ----------
         .out_data_bus(quant_data)       // out: 64 个 INT8 输出值

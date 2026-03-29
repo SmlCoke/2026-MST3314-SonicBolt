@@ -137,8 +137,8 @@ module conv_dwconv_tb #(
         .clk(clk),
         .rst_n(rst_n),
         .start(start),
-        .busy(busy),
-        .done(done),
+        .busy(),
+        .done(),
         .img_wr_en(img_wr_en),
         .img_wr_addr(img_wr_addr),
         .img_wr_data_lo(img_wr_data_lo),
@@ -159,10 +159,12 @@ module conv_dwconv_tb #(
         .out_stream_data(conv_out_stream_data)
     );
 
-    // Conv 实例。
+    // DWConv 实例。
     dwconv_subsystem dwconv (
         .clk(clk),
         .rst_n(rst_n),
+        .busy(busy),
+        .done(done),
 
         .in_stream_valid(conv_out_stream_valid),
         .in_stream_last(conv_out_stream_last),
@@ -170,7 +172,7 @@ module conv_dwconv_tb #(
         .in_stream_group(conv_out_stream_group),
         .in_stream_fire(conv_out_stream_fire),
         .in_stream_data(conv_out_stream_data),
-        
+
         .weight_wr_en(dwconv_weight_wr_en),
         .weight_wr_bank(dwconv_weight_wr_bank),
         .weight_wr_addr(dwconv_weight_wr_addr),
