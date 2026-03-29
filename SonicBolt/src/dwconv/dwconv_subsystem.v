@@ -21,8 +21,8 @@
   *   - 运行时只按 group 读取其中一部分切片。
  */
 module dwconv_subsystem #(
-    parameter integer M0      = 111,
-    parameter integer SHIFT_N = 14
+    parameter integer M0      = 59,
+    parameter integer SHIFT_N = 11
 ) (
     input  wire          clk,              // 时钟
     input  wire          rst_n,            // 低有效复位

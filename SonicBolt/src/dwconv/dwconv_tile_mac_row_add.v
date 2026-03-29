@@ -42,19 +42,19 @@ module dwconv_tile_mac_row_add (
     // Stage 1: 计算部分和并打拍
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            for (idx = 0; idx < 64; idx = idx + 1) begin
-                row_0 <= 18'sd0;
-                row_0 <= 18'sd0;
-                row_0 <= 18'sd0;
-                partial_0 <= 19'sd0;
-                partial_1 <= 19'sd0;
-            end
+            row_0 <= 18'sd0;
+            row_1 <= 18'sd0;
+            row_2 <= 18'sd0;
+            bias_val <= 16'sd0;
+            partial_0 <= 19'sd0;
+            partial_1 <= 19'sd0;
+            out_sum_bus <= 512'd0;
         end else begin
             for (idx = 0; idx < 16; idx = idx + 1) begin
                 row_0  = in_row_sum_bus[(0*288) + idx*18 +: 18];
                 row_1  = in_row_sum_bus[(1*288) + idx*18 +: 18];
                 row_2  = in_row_sum_bus[(2*288) + idx*18 +: 18];
-                bias_val = bias_data_bus[(idx/4)*4 +: 16];
+                bias_val = bias_data_bus[(idx/4)*16 +: 16];
 
                 partial_0 = row_0 + row_1;
                 partial_1 = row_2 + bias_val;

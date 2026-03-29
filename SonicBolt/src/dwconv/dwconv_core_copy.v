@@ -20,7 +20,7 @@
  * 调度语义:
  *
  */
-module dwconv_core #(
+module dwconv_core_copy #(
     parameter integer M0      = 59,
     parameter integer SHIFT_N = 11
 ) (
@@ -53,9 +53,13 @@ module dwconv_core #(
     output wire [127:0]  out_stream_data           // 输出数据：量化后的 tile 数据
 );
 
-    // 记录下一个待计算的 tile 编号
-    reg  [3:0] issue_pos;
-    reg  [2:0] issue_group;
+    // stage0_* 把上游 token 对齐到本层参数 SRAM 的同步读延迟。
+    reg          stage0_valid;
+    reg          stage0_last;
+    reg  [3:0]   stage0_pos;
+    reg  [2:0]   stage0_group;
+    reg          stage0_fire;
+    reg  [511:0] stage0_data_bus;
 
     // MAC 输出的 INT32 tile 元数据与数据。
     wire          tile_valid;
@@ -73,12 +77,17 @@ module dwconv_core #(
     wire          quant_fire;
     wire [127:0]  quant_data;
 
-    // 启动信号到来时，DWConv 激活 SRAM 读信号
-    // 注：启动信号一旦到来，在最后一个tile到来之前的一个周期截至，一直维持高电平
-    assign weight_rd_en = in_stream_fire;
-    assign bias_rd_en = in_stream_fire;
+    // 参数 SRAM 是同步读，因此需要在输入 token 到来时先发起读请求，
+    // 下一拍再把该 token 送入 MAC。
+    assign weight_rd_en    = in_stream_fire;
+    assign bias_rd_en      = in_stream_fire;
+    // assign weight_rd_group = in_stream_group;
+    // assign bias_rd_group   = in_stream_group;
+    
+    reg [3:0] issue_pos;
+    reg [2:0] issue_group;
     assign weight_rd_group = issue_group;
-    assign bias_rd_group = issue_group;
+    assign bias_rd_group   = issue_group;
 
     // 主状态机：
     // 1. in_stream_fire 拉高后进入 busy (第一个输入token到来时)
@@ -86,27 +95,35 @@ module dwconv_core #(
     // 3. 当量化输出的最后一个 token 出来时拉高 done，并退出 busy
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            // 参数 SRAM 地址信号初始为0，默认指向 group = 0
-            issue_group <= 3'b0;
-            issue_pos <= 4'b0;
             busy <= 1'b0;
             done <= 1'b0;
+            issue_pos <= 4'b0;
+            issue_group <= 3'b0;
+            // stage0_valid    <= 1'b0;
+            // stage0_last     <= 1'b0;
+            // stage0_pos      <= 4'b0;
+            // stage0_group    <= 3'b0;
+            // stage0_fire     <= 1'b0;
+            // stage0_data_bus <= 512'd0;
         end else begin
             done <= 1'b0;
 
-            // 当第一个输入token到来前一个上升沿(in_stream_fire拉高)，进入busy状态
-            if (in_stream_fire && !busy) begin
+            if (in_stream_valid && !busy) begin
                 busy <= 1'b1;
-                issue_group <= 3'b0;
-                issue_pos <= 4'b0;
             end else if (quant_valid && quant_last) begin
-                // 当量化输出的最后一个token出来时，退出busy并拉高done
                 busy <= 1'b0;
                 done <= 1'b1;
             end
 
+            // stage0_valid    <= in_stream_valid;
+            // stage0_last     <= in_stream_last;
+            // stage0_pos      <= in_stream_pos;
+            // stage0_group    <= in_stream_group;
+            // stage0_fire     <= in_stream_fire;
+            // stage0_data_bus <= in_stream_data;
+
             // 输入 valid 到来时更新 tile 编号组
-            if (in_stream_fire) begin
+            if (in_stream_valid) begin
                 if (issue_group == 3'd7) begin
                     issue_group <= 3'd0;
                     issue_pos   <= issue_pos + 4'd1;
@@ -124,14 +141,19 @@ module dwconv_core #(
         .rst_n(rst_n),
 
         // ---------- 输入元数据 ----------
-        .in_valid(in_stream_valid),           // in: 当前 token 有效     
-        .in_last(in_stream_last),             // in: 当前 token 是否为整张图最后一个 token   
-        .in_pos(in_stream_pos),               // in: 当前 token 的 pos 编号，范围 0~8 
-        .in_group(in_stream_group),           // in: 当前 token 的 group 编号，范围 0~7   
-        .in_fire(in_stream_fire),             // in: fire 信号职责转换，告诉第三层开始取参数 
-        
+        // .in_valid(stage0_valid),              // in: 当前 token 有效
+        // .in_last(stage0_last),                // in: 当前 token 是否为整张图最后一个 token
+        // .in_pos(stage0_pos),                  // in: 当前 token 的 pos 编号，范围 0~8
+        // .in_group(stage0_group),              // in: 当前 token 的 group 编号，范围 0~7
+        // .in_fire(stage0_fire),                // in: 传给下游的 metadata fire
+        .in_valid(in_stream_valid),              // in: 当前 token 有效
+        .in_last(in_stream_last),                // in: 当前 token 是否为整张图最后一个 token
+        .in_pos(in_stream_pos),                  // in: 当前 token 的 pos 编号，范围 0~8
+        .in_group(in_stream_group),              // in: 当前 token 的 group 编号，范围 0~7
+        .in_fire(in_stream_fire),                // in: 传给下游的 metadata fire
+
         // ---------- 输入数据(总线) ----------
-        .in_data_bus(in_stream_data),         // 输入 tile 数据，4 x 4 x 4 x 8bit = 512bit
+        .in_data_bus(stage0_data_bus),        // 输入 tile 数据，4 x 4 x 4 x 8bit = 512bit
         .weight_data_bus(weight_data_bus),    // in: 当前 group 的完整 11x4x7 INT8 权重
         .bias_data_bus(bias_data_bus),        // in: 当前 group 的完整 4 个 INT16 偏置
         

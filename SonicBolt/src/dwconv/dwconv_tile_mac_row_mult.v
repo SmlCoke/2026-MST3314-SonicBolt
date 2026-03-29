@@ -64,9 +64,9 @@ module dwconv_tile_mac_row_mult (
                         // 数据选择：当前输入数据行：oy_idx，对应数据：i + oy_idx
                         // 权重选择：第 ch_idx 个通道。
                         out_row_sum_bus[((ch_idx * 4 + oy_idx * 2 + ox_idx) * 18) +: 18] <=
-                            ($signed(row_window_data_reg[(ch_idx * 16 + oy_idx * 4 + ox_idx + 0) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 24) + (0 * 8) +: 8])) +
-                            ($signed(row_window_data_reg[(ch_idx * 16 + oy_idx * 4 + ox_idx + 1) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 24) + (1 * 8) +: 8])) + 
-                            ($signed(row_window_data_reg[(ch_idx * 16 + oy_idx * 4 + ox_idx + 2) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 24) + (2 * 8) +: 8]));
+                            ($signed(row_window_data_reg[(ch_idx * 8 + oy_idx * 4 + ox_idx + 0) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 24) + (0 * 8) +: 8])) +
+                            ($signed(row_window_data_reg[(ch_idx * 8 + oy_idx * 4 + ox_idx + 1) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 24) + (1 * 8) +: 8])) +
+                            ($signed(row_window_data_reg[(ch_idx * 8 + oy_idx * 4 + ox_idx + 2) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 24) + (2 * 8) +: 8]));
                     end
                 end
             end
