@@ -16,9 +16,14 @@
  *   - 权重和偏置仍然按 group 每拍读取
  *
  * 位宽说明:
- *
+ *   - in_stream_data: 4(ch) x 4(row) x 4(col) x 8bit = 512bit
+ *   - weight_data_bus: 11(kernel row) x 4(ch) x 7(col) x 8bit = 3*96*8bit = 2304bit
+ *   - bias_data_bus: 4(bias) x 16bit = 64bit
+ *   - out_stream_data: 4(ch) x 2(row) x 2(col) x 8bit = 128bit
  * 调度语义:
- *
+ *   - in_stream_fire 为启动信号，只比 in_stream_valid 先一个周期到来，用来启动参数 SRAM 的预读。
+ *     当信号到来时，SRAM 读使能有效，下一个周期会读出第一组参数(group = 0)
+ *   - 本模块 pos/group 仅作为元数据存在，一切计算听从 conv_core 指挥
  */
 module dwconv_core #(
     parameter integer M0      = 59,

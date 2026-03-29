@@ -2,7 +2,7 @@
 /*
  * 模块名称: conv_core
  * 作者: SonicBolt 团队
- * 日期: 2026-03-28
+ * 日期: 2026-03-29
  * 版本: v2.1
  *
  * 功能概述:
@@ -20,8 +20,8 @@
  *   - `consume_tick` 与 MAC 真正消费当前 token 的时刻对齐，供输入缓存后台预取下一 pos 的两行新数据
  *
  * 位宽说明:
- *   - pos_window_data    : 14 x 80bit = 1120bit，对应当前 pos 的 14 行工作集
- *   - weight_data_bus : 11 x 224bit = 2464bit，对应当前 group 的 11 条 kernel row
+ *   - pos_window_data     : 14 x 80bit = 1120bit，对应当前 pos 的 14 行工作集
+ *   - weight_data_bus     : 11 x 224bit = 2464bit，对应当前 group 的 11 条 kernel row
  *   - bias_data_bus       : 4 x 16bit = 64bit
  *   - out_stream_data     : 4 x 4 x 4 x 8bit = 512bit
  *
