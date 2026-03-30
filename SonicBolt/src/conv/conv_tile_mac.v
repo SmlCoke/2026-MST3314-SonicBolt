@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_tile_mac
  * 作者: SonicBolt 团队
- * 日期: 2026-03-28
- * 版本: v2.2
+ * 日期: 2026-03-30
+ * 版本: v2.3
  *
  * 功能概述:
  *   对一个 {pos, group} token 计算完整的 Conv1 输出 tile。
@@ -33,6 +33,7 @@
  *   - v2.1 中，将 input_stage 中数据与权重的打拍下沉到子模块内部，撤销长布线拉扯。此外，将 row_add 由一级流水*     拆分为两级，期望改善布线压力，降低时序拥堵。
  *   - v2.2 相比 v2.1 增加了第二层启动信号 out_stream_fire，当该信号为高时，告诉第二层 SRAM: 
  *     "马上开始准备参数, 下一个周期就要开始计算了"
+ *   - v2.3 将所有公共子模块提取（例如bias_pipe, meta_pipe）到 utils/ 目录下
  */
 module conv_tile_mac (
     input  wire                clk,             // 时钟
@@ -119,14 +120,14 @@ module conv_tile_mac (
     // - 偏置和元数据打拍，数据与权重打拍已下沉
     // ---------------------------------------------------------------------
 
-    conv_tile_mac_bias_pipe u_bias_pipe_stage1 (
+    bias_pipe u_bias_pipe_stage1 (
         .clk(clk),
         .rst_n(rst_n),
         .in_bias_bus(bias_data_bus),
         .out_bias_bus(stage1_bias_bus)
     );
 
-    conv_tile_mac_meta_pipe u_meta_pipe_stage1 (
+    meta_pipe u_meta_pipe_stage1 (
         .clk(clk),
         .rst_n(rst_n),
 
@@ -232,7 +233,7 @@ module conv_tile_mac (
     };
 
     // stage2: 元数据打拍
-    conv_tile_mac_meta_pipe u_meta_pipe_stage2 (
+    meta_pipe u_meta_pipe_stage2 (
         .clk(clk),
         .rst_n(rst_n),
         .in_valid(stage1_valid),
@@ -248,7 +249,7 @@ module conv_tile_mac (
     );
 
     // stage2: bias 打拍
-    conv_tile_mac_bias_pipe u_bias_pipe_stage2 (
+    bias_pipe u_bias_pipe_stage2 (
         .clk(clk),
         .rst_n(rst_n),
         .in_bias_bus(stage1_bias_bus),
@@ -272,7 +273,7 @@ module conv_tile_mac (
     );
 
     // stage3: 元数据打拍
-    conv_tile_mac_meta_pipe u_meta_pipe_stage3 (
+    meta_pipe u_meta_pipe_stage3 (
         .clk(clk),
         .rst_n(rst_n),
         .in_valid(stage2_valid),
@@ -288,7 +289,7 @@ module conv_tile_mac (
     );
 
     // stage4: 元数据再次打拍 (匹配 row_add 内的两级流水)
-    conv_tile_mac_meta_pipe u_meta_pipe_stage4 (
+    meta_pipe u_meta_pipe_stage4 (
         .clk(clk),
         .rst_n(rst_n),
         .in_valid(stage3_valid),

@@ -2,7 +2,7 @@
 /*
  * 模块名称: conv_shared_input_buffer
  * 作者: SonicBolt 团队
- * 日期: 2026-03-24
+ * 日期: 2026-03-30
  * 版本: v2.1
  *
  * 功能概述:
@@ -85,7 +85,7 @@ module conv_shared_input_buffer (
 
     // 单口输入 SRAM。
     // 当前版本不再保留双 bank ping-pong，而是采用“先整帧写入，再启动计算”的使用方式。
-    conv_sram_sp #(
+    sram_sp #(
         .DATA_W(ROW_WORD_W),
         .DEPTH(30),
         .ADDR_W(5)
@@ -225,7 +225,7 @@ module conv_shared_input_buffer (
             // -----------------------------------------------------------------
             // 同步 SRAM 预取返回时序
             // -----------------------------------------------------------------
-            // conv_sram_sp 是同步读：
+            // sram_sp 是同步读：
             // - 第 1 拍：拉高 active_rd_en_reg，送出地址
             // - 第 2 拍：rdata 更新，此时把返回值捕获到 prefetched_rows
             //

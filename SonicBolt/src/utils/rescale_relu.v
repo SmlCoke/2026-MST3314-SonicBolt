@@ -2,7 +2,7 @@
 /*
  * 模块名称: rescale_relu
  * 作者: SonicBolt 团队
- * 日期: 2026-03-29
+ * 日期: 2026-03-30
  * 版本: v1.0
  *
  * 功能概述: 
@@ -78,7 +78,9 @@ module rescale_relu #(
     // ---------------------------------------------------------------------
     rescale #(
         .M0(M0),
-        .SHIFT_N(SHIFT_N)
+        .SHIFT_N(SHIFT_N),
+        .TILE_H(TILE_H),
+        .TILE_W(TILE_W)
     ) u_rescale (
         .clk(clk),
         .rst_n(rst_n),

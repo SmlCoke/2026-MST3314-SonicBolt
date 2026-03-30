@@ -2,7 +2,7 @@
 /*
  * 模块名称: dwconv_tile_mac
  * 作者: SonicBolt 团队
- * 日期: 2026-03-29
+ * 日期: 2026-03-30
  * 版本: v1.0
  *
  * 功能概述:
@@ -85,7 +85,7 @@ module dwconv_tile_mac (
     // ------------------------- 第一级流水：stage1 --------------------------
     // - 偏置/元数据打拍，数据/权重打拍已下沉
     // ---------------------------------------------------------------------
-    dwconv_tile_meta_pipe u_meta_pipe_stage1 (
+    meta_pipe u_meta_pipe_stage1 (
         .clk(clk),
         .rst_n(rst_n),
 
@@ -105,7 +105,7 @@ module dwconv_tile_mac (
     );
     
     // stage2: bias 打拍
-    dwconv_tile_mac_bias_pipe u_bias_pipe_stage1 (
+    bias_pipe u_bias_pipe_stage1 (
         .clk(clk),
         .rst_n(rst_n),
         .in_bias_bus(bias_data_bus),
@@ -156,7 +156,7 @@ module dwconv_tile_mac (
     assign stage2_row_sum_bus = {row_sum_bus_2, row_sum_bus_1, row_sum_bus_0};
 
     // stage2: 元数据打拍
-    dwconv_tile_meta_pipe u_meta_pipe_stage2 (
+    meta_pipe u_meta_pipe_stage2 (
         .clk(clk),
         .rst_n(rst_n),
         .in_valid(stage1_valid),
@@ -172,7 +172,7 @@ module dwconv_tile_mac (
     );
 
     // stage2: bias 打拍
-    dwconv_tile_mac_bias_pipe u_bias_pipe_stage2 (
+    bias_pipe u_bias_pipe_stage2 (
         .clk(clk),
         .rst_n(rst_n),
         .in_bias_bus(stage1_bias_bus),
@@ -196,7 +196,7 @@ module dwconv_tile_mac (
     );
 
     // stage3: 元数据打拍
-    dwconv_tile_meta_pipe u_meta_pipe_stage3 (
+    meta_pipe u_meta_pipe_stage3 (
         .clk(clk),
         .rst_n(rst_n),
         .in_valid(stage2_valid),

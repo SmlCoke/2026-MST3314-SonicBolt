@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-03-29
- * 版本: v2.4
+ * 日期: 2026-03-30
+ * 版本: v2.5
  *
  * 功能概述: 基于 pos-major 数据流的 Conv 子系统顶层
  *
@@ -27,6 +27,7 @@
  *   - v2.3 相比 v2.2 增加了第二层启动信号 out_stream_fire，当该信号为高时，告诉第二层 SRAM: 
  *     "马上开始准备参数, 下一个周期就要开始计算了"
  *   - v2.3 有 bug，fire/last 信号并没有实际作为输出端口，v2.4已修复
+ *   - v2.5 中，将模块下所有公共子模块提取到 utils/ 目录下
  */
 module conv_subsystem #(
     parameter integer M0      = 111,

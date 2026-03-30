@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_core
  * 作者: SonicBolt 团队
- * 日期: 2026-03-29
- * 版本: v2.1
+ * 日期: 2026-03-30
+ * 版本: v2.2
  *
  * 功能概述:
  *   Conv 调度与主计算核心。
@@ -36,6 +36,7 @@
  *     这样可以减少动态功耗, `consume_tick` 改为与 stage0_valid 对齐，用来驱动输入缓存预取。
  *   - v2.1 相比 v2.0 增加了第二层启动信号 out_stream_fire，当该信号为高时，告诉第二层 SRAM: 
  *     "马上开始准备参数, 下一个周期就要开始计算了"
+ *   - v2.2 将所有公共子模块提取到 utils/ 目录下
  */
 module conv_core #(
     parameter integer M0      = 111,
@@ -214,9 +215,11 @@ module conv_core #(
     );
 
     // 后级做 rescale + ReLU + 饱和裁剪，输出最终 8bit tile。
-    conv_rescale_relu #(
+    rescale_relu #(
         .M0(M0),
-        .SHIFT_N(SHIFT_N)
+        .SHIFT_N(SHIFT_N),
+        .TILE_H(4),
+        .TILE_W(4)
     ) u_conv_rescale_relu (
         .clk(clk),
         .rst_n(rst_n),

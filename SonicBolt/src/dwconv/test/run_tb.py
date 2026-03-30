@@ -31,6 +31,7 @@ from typing import Dict, List, Tuple
 ROOT_DIR = Path(__file__).resolve().parents[4]
 CONV_DIR = ROOT_DIR / "SonicBolt" / "src" / "conv"
 DWCONV_DIR = ROOT_DIR / "SonicBolt" / "src" / "dwconv"
+UTILS_DIR = ROOT_DIR / "SonicBolt" / "src" / "utils"
 DATA_DIR = ROOT_DIR / "SonicBolt" / "data"
 TEST_DIR = DWCONV_DIR / "test"
 PREP_DIR = DATA_DIR / "prepared_test"
@@ -131,6 +132,7 @@ def compile_testbench() -> Path:
     # 收集 conv 目录下所有 RTL，再追加 testbench 顶层文件。
     source_files = sorted(str(path) for path in CONV_DIR.glob("*.v"))
     source_files += sorted(str(path) for path in DWCONV_DIR.glob("*.v"))
+    source_files.extend(str(path) for path in UTILS_DIR.glob("*.v"))
     source_files.append(str(TEST_DIR / "conv_dwconv_tb.v"))
 
     # 利用 iverilog 工具，编译所有 RTL 模块以及 Testbench，生成 vvp 可执行文件。

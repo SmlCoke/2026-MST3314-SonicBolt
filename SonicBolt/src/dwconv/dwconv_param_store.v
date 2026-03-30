@@ -2,7 +2,7 @@
 /*
  * 模块名称: dwconv_param_store
  * 作者: SonicBolt 团队
- * 日期: 2026-03-29
+ * 日期: 2026-03-30
  * 版本: v1.0
  *
  * 功能概述:
@@ -81,7 +81,7 @@ module dwconv_param_store (
             // 读数据直接铺到展平总线中对应的 96bit 切片。
             assign weight_data_bus[g_weight*96 +: 96] = weight_rdata[g_weight];
 
-            dwconv_sram_sp #(
+            sram_sp #(
                 .DATA_W(96),
                 .DEPTH(8),
                 .ADDR_W(3)
@@ -103,7 +103,7 @@ module dwconv_param_store (
     assign bias_bank_en      = bias_rd_en || bias_bank_wr_en;
     assign bias_bank_addr    = bias_rd_en ? bias_rd_group : bias_wr_addr;
 
-    dwconv_sram_sp #(
+    sram_sp #(
         .DATA_W(64),
         .DEPTH(8),
         .ADDR_W(3)

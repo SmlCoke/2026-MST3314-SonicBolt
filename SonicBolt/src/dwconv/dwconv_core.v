@@ -2,7 +2,7 @@
 /*
  * 模块名称: dwconv_core
  * 作者: SonicBolt 团队
- * 日期: 2026-03-29
+ * 日期: 2026-03-30
  * 版本: v1.0
  *
  * 功能概述:
@@ -152,9 +152,11 @@ module dwconv_core #(
     );
 
     // 后级做 rescale + ReLU + 饱和裁剪，输出最终 8bit tile。
-    dwconv_rescale_relu #(
+    rescale_relu #(
         .M0(M0),
-        .SHIFT_N(SHIFT_N)
+        .SHIFT_N(SHIFT_N),
+        .TILE_H(2),
+        .TILE_W(2)
     ) u_dwconv_rescale_relu (
         .clk(clk),
         .rst_n(rst_n),

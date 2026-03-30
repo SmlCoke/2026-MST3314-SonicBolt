@@ -1,6 +1,6 @@
 ﻿# Conv 子系统架构说明
 
-> 当前系统所属版本：SonicBolt v2.4
+> 当前系统所属版本：SonicBolt: Conv v2.5
 
 ## I. 整体架构
 
@@ -52,8 +52,11 @@ Conv 层在计算时，首先固定 pos，然后每个时钟上升沿更新 grou
 3. `conv_shared_input_buffer.v`：**输入缓存**，使用 SRAM 保存完整输入图，并维护当前 `pos` 对应的 `14` 行工作集（Register）。
 4. `conv_core.v`：**计算核心**，按 `{pos, group}` 发出 token，驱动输入工作集切换、参数读取、MAC 与量化链路。
 5. `conv_tile_mac.v`：**MAC 核心**，基于 `11` 级 `row PE` 串接，计算一个完整 `4(ch) x 4(row) x 4(col)` INT32 tile。
-6. `conv_rescale_relu.v`：**量化激活模块**，对 64 个 `INT32` 结果做统一量化和 ReLU，下属各级流水线多个模块。
-7. `conv_sram_sp.v`：**SRAM 行为模型**，实现单端口 SRAM 的读写行为，**仅供仿真使用**。
+
+**注意：**
+在 v2.5 版本中，由于 DWConv 子系统已经设计完成并且通过了测试，Conv 和 DWConv 共享的大量公共模块（例如：SRAM 行为模型、参数 bank 组织结构、bias 打拍模块、元数据打拍模块等）被收集到 `utils/` 目录下，例如：
+1. `rescale_relu.v`：**量化激活模块**，对 $4\times \text{TILE\_H} \times \text{TILE\_W}$ 个 `INT32` 结果做统一量化和 ReLU，下属各级流水线多个模块。其中 $\text{TILE\_H}$ 和 $\text{TILE\_W}$ 分别表示 tile 的高度和宽度。
+2. `sram_sp.v`：**SRAM 行为模型**，实现单端口 SRAM 的读写行为，**仅供仿真使用**。
 
 ### 3.2 顶层模块：conv_subsystem
 
@@ -145,31 +148,31 @@ conv_core 内部包含一个 conv_tile_mac 模块，负责计算一个完整的 
 conv_tile_mac 在 v2.2 版本内部升级为**四级流水线**（为缓解布线压力，大幅消减长连线及打断大加法树），分别对应以下计算流程：
 1. **局部数据打拍**：原 `conv_tile_mac_input_stage` 被废除，改为将数据总线和权重总线的切片下沉到乘法器内部 `conv_tile_mac_row_mult` 的第一级打拍。避免了外围巨大总线的 Fanout。偏置则通过 `conv_tile_mac_bias_pipe` 单独打拍。
 2. `conv_tile_mac_row_mult`：内部包含 2 级流水（局部寄存输入 + 行乘法计算）。11 个模块并行计算对应的 kernel_row 乘加结果，输出 64 个 INT19 的部分和。
-   - input: 4×10×8bit 输入条带，及其对应的4×7×8bit 卷积核行
-   - output: 4×4×4×19bit 部分和（经内部打拍输出）
+   - input: 4x10x8bit 输入条带，及其对应的4×7×8bit 卷积核行
+   - output: 4x4×4x19bit 部分和（经内部打拍输出）
 3. `conv_tile_mac_row_add`：作为后续的第 3、4 级流水，对 11 个 kernel_row 的部分和极偏置进行归约。为了切断 12 个操作数构成的庞大加法树，模块内部已被显式分割为两级时序：第一拍对 12 个输入执行两两相加存入 Register 堆，第二拍汇总得出 64 个最终结果。
-   - input: 11×(4×4×4×19bit) 部分和
-   - output: 4×4×4×32bit 结果
+   - input: 11x(4x4x4x19bit) 部分和
+   - output: 4x4x4x32bit 结果
 
-此外，在流水线执行过程中，MAC 单元还封装了 `conv_tile_mac_meta_pipe`(元数据打拍模块)，随数据流水深度一同扩充以**保证元数据能够在时序上严格对齐**到最终输出的 tile（现共需打 4 拍以匹配上述内部流水级）。
+此外，在流水线执行过程中，MAC 单元还封装了 `meta_pipe`(元数据打拍模块)，随数据流水深度一同扩充以**保证元数据能够在时序上严格对齐**到最终输出的 tile（现共需打 4 拍以匹配上述内部流水级）。
 
 #### 3.5.3 量化激活单元
 
 conv_core 内部还包含一个 conv_rescale_relu 模块，负责对 conv_tile_mac 输出的 64 个 INT32 结果做统一量化和 ReLU。
 
 conv_rescale_relu 内部包含**两级流水线**，分别对应两个计算模块：
-1. `conv_rescale`：量化流水第 1 级，负责 64 个 INT32 与常数 M0 的乘法以及移位 SHIFT_N。
-   - input: 4×4×4×32bit 输入结果
-   - output: 4×4×4×32bit Rescale 结果
-2. `conv_rescale_shift_stage`：量化流水第 2 级，对 Rescale 结果执行 ReLU 和饱和截断。
-   - input: 4×4×4×32bit Rescale 结果
-   - output: 4×4×4×8bit ReLU和饱和截断结果
+1. `rescale`：量化流水第 1 级，负责 64 个 INT32 与常数 M0 的乘法以及移位 SHIFT_N。
+   - input: 4x4x4x32bit 输入结果
+   - output: 4x4x4x32bit Rescale 结果
+2. `relu_saturate`：量化流水第 2 级，对 Rescale 结果执行 ReLU 和饱和截断。
+   - input: 4x4x4x32bit Rescale 结果
+   - output: 4x4x4x8bit ReLU和饱和截断结果
 
 ### IV. RTL 阅读指导
-在阅读 conv 的 RTL 代码时，建议按照以下顺序：
+在阅读 conv 的 RTL 代码时，建议按照以下顺序:
 1. 从顶层 `conv_subsystem.v` 开始，理清各个模块之间的连接关系和数据流向。**此时不必太在意每个 wire 或者 reg 的具体含义以及生命周期，遇到不懂的，先看子模块**。
 2. 阅读 `conv_shared_input_buffer.v`，理解输入 bank SRAM、`shadow cache`、14 行工作集和两行预取的交互方式。
-3. 阅读 `conv_param_store.v` 以及 `conv_sram_sp.v`，理解权重和偏置的 bank 组织结构
-4. 阅读 `conv_core.v`（**核心**），理解 token 的发出逻辑，以及 conv_tile_mac 和 conv_rescale_relu 的调用关系。这个模块是整个第一层 Conv 子系统的计算和调度核心，它负责发出请求信号、地址，接受数据，执行卷积和量化计算。同 conv_subsystem.v 一样，不必先深究每个 wire 或 reg 的含义，简单理一理子模块连接关系，然后先看子模块。
+3. 阅读 `conv_param_store.v` 以及 `sram_sp.v`，理解权重和偏置的 bank 组织结构
+4. 阅读 `conv_core.v`（**核心**），理解 token 的发出逻辑，以及 `conv_tile_mac` 和 `rescale_relu` 的调用关系。这个模块是整个第一层 Conv 子系统的计算和调度核心，它负责发出请求信号、地址，接受数据，执行卷积和量化计算。同 conv_subsystem.v 一样，不必先深究每个 wire 或 reg 的含义，简单理一理子模块连接关系，然后先看子模块。
 5. 阅读 `conv_tile_mac.v`，理解 `conv_core` 内部的 MAC 计算细节。这个模块是负责执行卷积算术的核心，经历了布线层面的深度抗拥塞优化（v2.2）：打散了外部寄存器改为局部锁存，并将超大加法树截断为多级流水。配合模块及其子模块内部的改版注释，可以清晰看到总线重构细节。
-6. 阅读 `conv_rescale_relu.v`，理解 `conv_core` 内部的量化激活计算细节。这个模块是整个第一层 Conv 子系统的量化激活核心，它负责执行量化和 ReLU，包含两级流水线：Rescale、ReLU+饱和截断。同 `conv_tile_mac.v`，这个模块理解起来也很容易。
+6. 阅读 `utils/rescale_relu.v`，理解 `conv_core` 内部的量化激活计算细节。这个模块是整个第一层 Conv 子系统的量化激活核心，它负责执行量化和 ReLU，包含两级流水线：Rescale、ReLU+饱和截断。同 `conv_tile_mac.v`，这个模块理解起来也很容易。
