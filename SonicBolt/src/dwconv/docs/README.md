@@ -10,7 +10,7 @@
 4. 输出特征图尺寸： $C\times H\times W = 32\times 18\times 2$ ，每个数据位宽 INT8
 
 此处的 DWConv 不做跨通道求和，每个输入通道只与自己的 $3\times 3$ 卷积核相乘，最终输出通道数与输入通道数保持一致，仍然为 32。
-从系统连接关系上看，DWConv 子系统直接接收 Conv 子系统输出的 tile stream（Conv 输出单个 token 为 $4\text{(ch)} \times 4\text{(row)} \times 4\text{(col)}$ 即 $\text{bit}$，DWConv 输出单个 token 为 $4\text{(ch)} \times 2\text{(row)} \times 2\text{(col)}$ 即 $\text{bit}$ ）。
+从系统连接关系上看，DWConv 子系统直接接收 Conv 子系统输出的 tile stream（Conv 输出单个 token 为 $4\text{(ch)} \times 4\text{(row)} \times 4\text{(col)}$ 个 INT8 数据，DWConv 输出单个 token 为 $4\text{(ch)} \times 2\text{(row)} \times 2\text{(col)}$ 个 INT8 数据 ）。
 
 ## II. 计算思路
 
@@ -55,7 +55,7 @@ DWConv 的调度顺序很简单，不需要像 Conv 一样考虑与 input buffer
 2. **接收**来自 Conv 的 tile stream。
 3. 输出 DWConv 计算完成后的 tile stream.
 
-顶层为内部的 dwconv_core 提供默认重新量化参数（ $M_0 = 59$, $\text{SHIFT \_ N} = 11$ ）。
+顶层为内部的 dwconv_core 提供默认重新量化参数（ $M_0 = 59$, $\text{SHIFT-N} = 11$ ）。
 
 ### 3.3 权重与偏置组织：dwconv_param_store
 

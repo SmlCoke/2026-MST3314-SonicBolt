@@ -55,7 +55,7 @@ Conv 层在计算时，首先固定 pos，然后每个时钟上升沿更新 grou
 
 **注意：**
 在 v2.5 版本中，由于 DWConv 子系统已经设计完成并且通过了测试，Conv 和 DWConv 共享的大量公共模块（例如：SRAM 行为模型、参数 bank 组织结构、bias 打拍模块、元数据打拍模块等）被收集到 `utils/` 目录下，例如：
-1. `rescale_relu.v`：**量化激活模块**，对 $4\times \text{TILE\_H} \times \text{TILE\_W}$ 个 `INT32` 结果做统一量化和 ReLU，下属各级流水线多个模块。其中 $\text{TILE\_H}$ 和 $\text{TILE\_W}$ 分别表示 tile 的高度和宽度。
+1. `rescale_relu.v`：**量化激活模块**，对 $4\times \text{TILE-H} \times \text{TILE-W}$ 个 `INT32` 结果做统一量化和 ReLU，下属各级流水线多个模块。其中 $\text{TILE-H}$ 和 $\text{TILE-W}$ 分别表示 tile 的高度和宽度。
 2. `sram_sp.v`：**SRAM 行为模型**，实现单端口 SRAM 的读写行为，**仅供仿真使用**。
 
 ### 3.2 顶层模块：conv_subsystem
