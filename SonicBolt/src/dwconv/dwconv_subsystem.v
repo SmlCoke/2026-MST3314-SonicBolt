@@ -141,7 +141,7 @@ module dwconv_subsystem #(
 
         // ---------- 输出数据流接口 ----------
         .out_stream_valid(tile_valid_int),     // out: 输出元数据：有效
-        .out_stream_last(tile_last_int),
+        .out_stream_last(tile_last_int),       // out: 输出元数据：最后
         .out_stream_pos(tile_pos_int),         // out: 输出元数据：位置
         .out_stream_group(tile_group_int),     // out: 输出元数据：通道组
         .out_stream_data(tile_data_int)        // out: 输出数据：量化后的 tile 数据

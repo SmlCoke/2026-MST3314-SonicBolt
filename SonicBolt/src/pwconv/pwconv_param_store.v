@@ -8,9 +8,9 @@
  *   保存 PWConv 整层权重和偏置，并按输出 group 读出当前 token 所需切片
  *
  * 存储组织:
- *   - 8 个 weight bank，对应 8 个输入通道组，每组 4 个输入通道，即 4 个卷积核
- *   - 每个 weight bank 深度 8，即每个 bank 里有 8 个地址，这 8 个地址分别对应 8 个输出通道组
- *   - 每个 weight word = 4(out) x 4(in) x INT8 = 128bit
+ *   - 8 个 weight bank，对应 8 个输出通道组，每组 4 个输出通道，即 4 个卷积核
+ *   - 每个 weight bank 深度 8，即每个 bank 里有 8 个地址，这 8 个地址分别对应 8 个输入通道组
+ *   - 每个 weight word = 4(in_channels) x 4(kernels) x INT8 = 128bit
  *   - 1 个 bias bank，深度 8，word = 4 x INT16 = 64bit
  *
  * 读写约定:
@@ -45,9 +45,9 @@ module pwconv_param_store (
     wire [127:0] weight_rdata [0:7];
     wire [63:0]  bias_rdata;
 
-    wire [7:0]  weight_bank_sel_hit;// 写访问的 weight bank 
-    wire [7:0]  weight_bank_en;// 读写访问的 weight bank 使能
-    wire [7:0]  weight_bank_wr_en;// 写访问的 weight bank 地址；读访问时所有 bank 地址相同
+    wire [7:0]  weight_bank_sel_hit;        // 写访问的 weight bank 
+    wire [7:0]  weight_bank_en;             // 读写访问的 weight bank 使能
+    wire [7:0]  weight_bank_wr_en;          // 写访问的 weight bank 地址；读访问时所有 bank 地址相同
     wire [2:0]  weight_bank_addr [0:7];
 
     wire        bias_bank_sel_hit;

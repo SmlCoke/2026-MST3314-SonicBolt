@@ -43,10 +43,10 @@ module dwconv_core #(
     input wire [511:0]   in_stream_data,           // 输入 tile 数据，4 x 4 x 4 x 8bit = 512bit
 
     // ---------- 权重/偏置交互接口 ----------
-    output wire          weight_rd_en,             // DWConv 权重 SRAM 读使能    
-    output wire [2:0]    weight_rd_group,          // 读取哪个 group 的权重       
-    output wire          bias_rd_en,               // DWConv 偏置 SRAM 读使能  
-    output wire [2:0]    bias_rd_group,            // 读取哪个 group 的偏置     
+    output wire          weight_rd_en,             // DWConv 权重 SRAM 读使能
+    output wire [2:0]    weight_rd_group,          // 读取哪个 group 的权重
+    output wire          bias_rd_en,               // DWConv 偏置 SRAM 读使能
+    output wire [2:0]    bias_rd_group,            // 读取哪个 group 的偏置
     input  wire [3*96-1:0] weight_data_bus,        // 权重 SRAM 读出数据总线
     input  wire [63:0]   bias_data_bus,            // 偏置 SRAM 读出数据总线，4个偏置，每个16bit
 
@@ -137,14 +137,14 @@ module dwconv_core #(
         
         // ---------- 输入数据(总线) ----------
         .in_data_bus(in_stream_data),         // 输入 tile 数据，4 x 4 x 4 x 8bit = 512bit
-        .weight_data_bus(weight_data_bus),    // in: 当前 group 的完整 11x4x7 INT8 权重
+        .weight_data_bus(weight_data_bus),    // in: 当前 group 的完整 3 x 4 x 3 INT8 权重
         .bias_data_bus(bias_data_bus),        // in: 当前 group 的完整 4 个 INT16 偏置
         
         // ---------- 输出元数据 ----------
         .out_valid(tile_valid),               // out: 输出累加 tile 有效
         .out_last(tile_last),                 // out: 输出累加 tile 是否为最后一个 token
         .out_pos(tile_pos),                   // out: 输出 tile 的 pos
-        .out_group(tile_group),               // out: 输出 tile 的 group】
+        .out_group(tile_group),               // out: 输出 tile 的 group
         .out_fire(tile_fire),                // out: 输出的第三层启动信号
         
         // ---------- 输出数据 ----------               

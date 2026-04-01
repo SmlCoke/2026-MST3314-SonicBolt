@@ -3,6 +3,7 @@
  * 模块名称: pwconv_core
  * 作者: SonicBolt 团队
  * 日期: 2026-03-29
+ * 版本: v1.0
  *
  * 功能概述:
  *   PWConv 的输入接收、token 调度、参数读取和计算核心拼接。
@@ -31,30 +32,31 @@ module pwconv_core #(
 ) (
     input  wire          clk,
     input  wire          rst_n,
-    input  wire          start,
     output reg           busy,
     output reg           done,
 
-    input  wire          in_stream_valid,
-    output wire          in_stream_ready,
-    input  wire [3:0]    in_stream_pos,
-    input  wire [2:0]    in_stream_group,
+    // ---------- 输入数据流接口 ----------
+    input  wire          in_stream_valid,          // 输入 tile 有效
+    input  wire          in_stream_fire,           // 输入的第三层启动信号
+    input  wire [3:0]    in_stream_pos,            // 输入 tile 的 pos 编号
+    input  wire [2:0]    in_stream_group,          // 输入 tile 的 group 编号
+    input  wire [1023:0] even_pos_data,            // 输入数据总线，来自于偶数pos
+    input  wire [1023:0] odd_pos_data,             // 输入数据总线，来自于奇数pos
 
-    input  wire [1023:0] even_pos_data,
-    input  wire [1023:0] odd_pos_data,
+    // ---------- 权重/偏置交互接口 ----------
+    output wire             weight_rd_en,          // DWConv 权重 SRAM 读使能      
+    output wire [2:0]       weight_rd_group,       // 读取哪个 group 的权重         
+    output wire             bias_rd_en,            // DWConv 偏置 SRAM 读使能    
+    output wire [2:0]       bias_rd_group,         // 读取哪个 group 的偏置       
+    input  wire [8*128-1:0] weight_data_bus,       // 权重 SRAM 读出数据总线         
+    input  wire [63:0]      bias_data_bus,         // 偏置 SRAM 读出数据总线
 
-    output wire             weight_rd_en,
-    output wire [2:0]       weight_rd_group,
-    output wire             bias_rd_en,
-    output wire [2:0]       bias_rd_group,
-    input  wire [8*128-1:0] weight_data_bus,
-    input  wire [63:0]      bias_data_bus,
-
-    input  wire          out_stream_ready,
-    output wire          out_stream_valid,
-    output wire [3:0]    out_stream_pos,
-    output wire [2:0]    out_stream_group,
-    output wire [127:0]  out_stream_data
+    // ---------- 输出数据流接口 ----------
+    input  wire          out_stream_ready,              
+    output wire          out_stream_valid,         // 输出元数据：有效   
+    output wire [3:0]    out_stream_pos,           // 输出元数据：位置    
+    output wire [2:0]    out_stream_group,         // 输出元数据：通道组        
+    output wire [127:0]  out_stream_data           // 输出数据：量化后的 tile 数据    
 );
 
     localparam integer TOKEN_COUNT = 72;
@@ -74,8 +76,8 @@ module pwconv_core #(
     reg  [2:0] stage0_group;
 
     wire [3:0] loaded_pos_count;
-    wire       input_fire;
-    wire       issue_fire;
+    wire       input_fire;      // 状态信号，表示目前处于接收输入数据状态
+    wire       issue_fire;      // 状态信号，高电平表示当前可以发送 token 进入计算
 
     // 当前发射的是哪一个 pos，就从对应奇偶缓冲里取完整 tile用于计算
     wire [1023:0] current_tile_data;
@@ -95,20 +97,23 @@ module pwconv_core #(
     wire [127:0] quant_data;
 
     // 只要系统 busy 就持续接收输入
-    assign in_stream_ready  = busy;
-    assign input_fire       = busy && in_stream_valid && in_stream_ready;
+    assign input_fire       = busy && in_stream_valid;
     assign loaded_pos_count = recv_count[6:3]; // recv_count / 8 = pos
+    
     // issue_pos < loaded_pos_count pos 发射 < 输入，发射指令置 1 ，发射至计算单元
+    // 例如： 一个时钟上升沿， rec_count变为8，则 loaded_pos_count 从0变为1，此时 pos 仍为0
+    // 下一个时钟上升沿，检测到 issue_fire = 1，才会更新 issue_pos
     assign issue_fire       = busy && (issue_count < TOKEN_COUNT) && (issue_pos < loaded_pos_count);
+    // issue_fire 高电平每次只会维持8个时钟周期，之后的下一个上升沿 issue_pos = loaded_pos_count
+    // 在这 8 个时钟周期内，issue_group 从0计数到7，发射完一个 pos 的 8 个 group 后，issue_pos 加1，但是此时 loaded_pos_count 也加1，仍然满足 issue_pos < loaded_pos_count 的条件，可以继续发射下一个 pos 的 token
 
-
-    // 当前要计算哪个输出 group，就读取哪个地址的权重 / bias
-    // 发射置 1 ，偏置和权重读取置 1 ，读出的数据直接送到 MAC 单元
+    // 根据上述分析，issue_fire 自从第一次拉高后，直到结束一直有效
     assign weight_rd_en    = issue_fire;
     assign weight_rd_group = issue_group;
     assign bias_rd_en      = issue_fire;
     assign bias_rd_group   = issue_group;
 
+    // 根据 pos 取输入数，由于是 assign，故 current_tile_data 与元数据同步更新
     assign current_tile_data = stage0_pos[0] ? odd_pos_data : even_pos_data;
 
     always @(posedge clk or negedge rst_n) begin
@@ -126,7 +131,8 @@ module pwconv_core #(
         end else begin
             done <= 1'b0;
 
-            if (start && !busy) begin
+            // 当第一个输入token到来前一个上升沿(in_stream_fire拉高)，进入busy状态
+            if (in_stream_fire && !busy) begin
                 busy         <= 1'b1;
                 recv_count   <= 7'd0;
                 issue_count  <= 7'd0;
@@ -169,18 +175,23 @@ module pwconv_core #(
     pwconv_tile_mac u_pwconv_tile_mac (
         .clk(clk),
         .rst_n(rst_n),
-        .in_valid(stage0_valid),
-        .in_last(stage0_last),
-        .in_pos(stage0_pos),
-        .in_group(stage0_group),
-        .tile_data_bus(current_tile_data),
-        .weight_data_bus(weight_data_bus),
-        .bias_data_bus(bias_data_bus),
-        .out_valid(tile_valid),
-        .out_last(tile_last),
-        .out_pos(tile_pos),
-        .out_group(tile_group),
-        .out_accum_bus(tile_accum_bus)
+        // ---------- 输入元数据 ----------
+        .in_valid(stage0_valid),              // in: 当前 token 是否有效
+        .in_last(stage0_last),                // in: 当前 token 是否为整张图最后一个 token
+        .in_pos(stage0_pos),                  // in: 当前 token 的 pos 编号
+        .in_group(stage0_group),              // in: 当前 token 的 group 编号
+
+        // ---------- 输入数据(总线) ----------
+        .tile_data_bus(current_tile_data),    // in: 当前 token 对应的完整 tile 数据，来自于奇偶缓冲
+        .weight_data_bus(weight_data_bus),    // in: 当前 group 的完整 8x4x4x8bit 权重数据
+        .bias_data_bus(bias_data_bus),        // in: 当前 group 的完整 4 个 INT16 偏置
+        
+        // ---------- 输出元数据 ----------
+        .out_valid(tile_valid),               // out: 输出累加 tile 有效
+        .out_last(tile_last),                 // out: 输出累加 tile 是否为最后一个 token
+        .out_pos(tile_pos),                   // out: 输出 tile 的 pos 编号
+        .out_group(tile_group),               // out: 输出 tile 的 group 编号
+        .out_accum_bus(tile_accum_bus)        // out: 
     );
 
     pwconv_rescale_relu #(

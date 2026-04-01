@@ -3,6 +3,7 @@
  * 模块名称: pwconv_input_buffer
  * 作者: SonicBolt 团队
  * 日期: 2026-03-29
+ * 版本: v1.0
  *
  * 功能概述:
  *   逐点卷积输入侧的双缓冲 tile 缓存。
@@ -19,10 +20,10 @@
 module pwconv_input_buffer (
     input  wire          clk,
     input  wire          rst_n,
-    input  wire          start_consume,
     input  wire          capture_en,
+    input  wire          in_fire,         // 启动信号
     input  wire [3:0]    in_pos,
-    input  wire [2:0]    in_group, //8组，每组4ch
+    input  wire [2:0]    in_group,        //8组，每组4ch
     input  wire [127:0]  in_data,
     output wire [1023:0] even_pos_data,
     output wire [1023:0] odd_pos_data
@@ -36,7 +37,8 @@ module pwconv_input_buffer (
             even_buf <= 1024'd0;
             odd_buf  <= 1024'd0;
         end else begin
-            if (start_consume) begin
+            // 启动信号到来，则清空缓存区，准备等待第一个tile输入
+            if (in_fire) begin
                 even_buf <= 1024'd0;
                 odd_buf  <= 1024'd0;
             end
