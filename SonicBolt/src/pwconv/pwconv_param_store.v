@@ -14,8 +14,9 @@
  *   - 1 个 bias bank，深度 8，word = 4 x INT16 = 64bit
  *
  * 读写约定:
- *   - 写权重时: bank = 输入 group! addr = 输出 group!
+ *   - 写权重时: bank=输入 group、addr=输出 group
  *   - 读权重时: 8 个 bank 同时读取同一个输出 group 地址
+ *   - 输出总线按输入 group 顺序拼接，供 MAC 做跨 group 归约
  *   - bias 只有 1 个 bank，因此 bank 端口仅保留接口对齐意义
  */
 module pwconv_param_store (
@@ -58,16 +59,16 @@ module pwconv_param_store (
     generate
         genvar g_weight;
         for (g_weight = 0; g_weight < 8; g_weight = g_weight + 1) begin : g_weight_bank
-            // 写按 bank 顺序；读口则让所有 bank 对同一地址并行读取，送入MAC，MAC 内部再根据输入 group 选择对应的 weight 切片
+            // 写按输入 group 选 bank；读时所有 bank 并行读取同一个输出 group 地址。
             assign weight_bank_sel_hit[g_weight] = (weight_wr_bank == g_weight[2:0]);
             assign weight_bank_wr_en[g_weight]   = weight_wr_en && weight_bank_sel_hit[g_weight];
             assign weight_bank_en[g_weight]      = weight_rd_en || weight_bank_wr_en[g_weight];
             assign weight_bank_addr[g_weight]    = weight_rd_en ? weight_rd_group : weight_wr_addr;
 
-            // 按 bank 顺序拼接成总线，供后级 MAC 统一取数
+            // 按输入 group 顺序拼接总线：g=0..7 对应 in_group=0..7。
             assign weight_data_bus[g_weight*128 +: 128] = weight_rdata[g_weight];
 
-            conv_sram_sp #(
+            sram_sp #(
                 .DATA_W(128),
                 .DEPTH(8),
                 .ADDR_W(3)
@@ -89,7 +90,7 @@ module pwconv_param_store (
     assign bias_bank_en      = bias_rd_en || bias_bank_wr_en;
     assign bias_bank_addr    = bias_rd_en ? bias_rd_group : bias_wr_addr;
 
-    conv_sram_sp #(
+    sram_sp #(
         .DATA_W(64),
         .DEPTH(8),
         .ADDR_W(3)

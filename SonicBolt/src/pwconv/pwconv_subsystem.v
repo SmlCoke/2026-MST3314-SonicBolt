@@ -41,6 +41,8 @@ module pwconv_subsystem #(
     input  wire [63:0]   bias_wr_data,     // 偏置写数据，4 x 16bit = 64bit
 
     output wire          out_stream_valid, // 输出 tile 有效
+    output wire          out_stream_last,  // 输出 tile 是否为最后一个 token
+    output wire          out_stream_fire,  // 输出的下一层启动信号
     output wire [3:0]    out_stream_pos,   // 输出 tile 的 pos 编号
     output wire [2:0]    out_stream_group, // 输出 tile 的 group 编号
     output wire [127:0]  out_stream_data   // 输出 tile 数据，4 x 2 x 2 x 8bit = 128bit
@@ -129,6 +131,7 @@ module pwconv_subsystem #(
         .in_stream_group(in_stream_group),      // in: 输入 tile 的 group 编号
         .even_pos_data(even_pos_data),          // in: 输入数据总线，来自于偶数pos
         .odd_pos_data(odd_pos_data),            // in: 输入数据总线，来自于奇数pos
+        .out_stream_ready(1'b1),                // in: v1 版本暂不回压，默认始终可接收
 
         // ---------- 权重/偏置交互接口 ----------
         .weight_rd_en(weight_rd_en),            // out: DWConv 权重 SRAM 读使能       
@@ -140,6 +143,8 @@ module pwconv_subsystem #(
         
         // ---------- 输出数据流接口 ----------
         .out_stream_valid(out_stream_valid),    // out: 输出元数据：有效
+        .out_stream_last(out_stream_last),      // out: 输出元数据：最后一个 token
+        .out_stream_fire(out_stream_fire),      // out: 输出的下一层启动信号
         .out_stream_pos(out_stream_pos),        // out: 输出元数据：位置
         .out_stream_group(out_stream_group),    // out: 输出元数据：通道组
         .out_stream_data(out_stream_data)       // out: 输出数据：量化后的 tile 数据
