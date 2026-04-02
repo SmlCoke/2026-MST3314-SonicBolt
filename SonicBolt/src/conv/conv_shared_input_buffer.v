@@ -2,15 +2,11 @@
 /*
  * 模块名称: conv_shared_input_buffer
  * 作者: SonicBolt 团队
- * 日期: 2026-03-30
- * 版本: v2.1
+ * 日期: 2026-04-02
+ * 版本: v2.2
  *
  * 功能概述:
  *   Conv1 输入前端，使用单口 SRAM 保存整帧输入图，并用 14 行工作集缓存当前 pos。
- *
- * 版本定位:
- *   - 相比 v2.0 取消了双 Bank 和 双 Cache 缓存设计
- *   - 只保留了一个 Bank 和一个 Cache，这是建立在目前 1 token/cycle 的高新能前提上的。
  *
  * 设计要点:
  *   - 整帧 30x10x8bit 输入图保存到一组 30x80 SRAM，而不是 整帧 FF 缓存
@@ -29,6 +25,11 @@
  *   - ...
  *   - pos = 8  -> 输入行 16 ~ 29
  *   - 相邻 pos 之间只前进 2 行
+ *
+ * 版本定位:
+ *   - 相比 v2.0 取消了双 Bank 和 双 Cache 缓存设计
+ *   - 只保留了一个 Bank 和一个 Cache，这是建立在目前 1 token/cycle 的高新能前提上的。
+ *   - v2.2 引入了 Memory Compiler 生成的 SRAM 模块，重构了读写控制逻辑。
  */
 module conv_shared_input_buffer (
     input  wire          clk,              // 时钟
