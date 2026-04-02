@@ -50,14 +50,13 @@ module conv_dwconv_tb #(
     reg start;
     wire conv_busy;
     wire conv_done;
-    wire busy;
-    wire done;
+    wire dwconv_busy;
+    wire dwconv_done;
 
     // 输入图写口：逐行写入 30x10 输入图，每行 80bit。
     reg img_wr_en;
     reg [4:0] img_wr_addr;
-    reg [39:0] img_wr_data_lo;
-    reg [39:0] img_wr_data_hi;
+    reg [79:0] img_wr_row_word;
 
     // Conv权重写口：11 个 bank x 8 个 group = 88 个 224bit word。
     reg conv_weight_wr_en;
@@ -143,8 +142,7 @@ module conv_dwconv_tb #(
         .done(conv_done),
         .img_wr_en(img_wr_en),
         .img_wr_addr(img_wr_addr),
-        .img_wr_data_lo(img_wr_data_lo),
-        .img_wr_data_hi(img_wr_data_hi),
+        .img_wr_row_data(img_wr_row_word),
         .weight_wr_en(conv_weight_wr_en),
         .weight_wr_bank(conv_weight_wr_bank),
         .weight_wr_addr(conv_weight_wr_addr),
@@ -165,8 +163,8 @@ module conv_dwconv_tb #(
     dwconv_subsystem dwconv (
         .clk(clk),
         .rst_n(rst_n),
-        .busy(busy),
-        .done(done),
+        .busy(dwconv_busy),
+        .done(dwconv_done),
 
         .in_stream_valid(conv_out_stream_valid),
         .in_stream_last(conv_out_stream_last),
@@ -201,8 +199,7 @@ module conv_dwconv_tb #(
             start = 1'b0;
             img_wr_en = 1'b0;
             img_wr_addr = 5'd0;
-            img_wr_data_lo = 40'd0;
-            img_wr_data_hi = 40'd0;
+            img_wr_row_word = 80'd0;
 
             conv_weight_wr_en = 1'b0;
             conv_weight_wr_bank = 5'd0;
@@ -352,14 +349,12 @@ module conv_dwconv_tb #(
                 @(posedge clk);
                 img_wr_en <= 1'b1;
                 img_wr_addr <= row_idx[4:0];
-                img_wr_data_lo <= row_word[39:0];
-                img_wr_data_hi <= row_word[79:40];
+                img_wr_row_word <= row_word;
             end
             @(posedge clk);
             img_wr_en <= 1'b0;
             img_wr_addr <= 5'd0;
-            img_wr_data_lo <= 40'd0;
-            img_wr_data_hi <= 40'd0;
+            img_wr_row_word <= 80'd0;
         end
     endtask
 
@@ -376,7 +371,7 @@ module conv_dwconv_tb #(
     // 等待 DUT 完成，或者在超时后报错退出。
     task automatic wait_done_or_timeout;
         begin
-            while (!done) begin
+            while (!dwconv_done) begin
                 @(posedge clk);
                 if (cycle_counter > timeout_cycles) begin
                     $display("TB_ERROR timeout  cycles=%0d", cycle_counter);
@@ -400,7 +395,7 @@ module conv_dwconv_tb #(
                 tile_counter <= tile_counter + 1;
                 seen_first_tile <= 1'b1;
                 $display("TILE pos=%0d group=%0d data=%032x", dwconv_out_stream_pos, dwconv_out_stream_group, dwconv_out_stream_data);
-            end else if (seen_first_tile && (tile_counter < TOKEN_COUNT) && !done) begin
+            end else if (seen_first_tile && (tile_counter < TOKEN_COUNT) && !dwconv_done) begin
                 // 接收不到 tile 了，但是 tile 总数小于72，判定为断流
                 stream_gap_error <= 1'b1;
             end

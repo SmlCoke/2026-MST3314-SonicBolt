@@ -48,8 +48,7 @@ module conv_subsystem_tb #(
     // 输入图写口：逐行写入 30x10 输入图，每行 80bit。
     reg img_wr_en;
     reg [4:0] img_wr_addr;
-    reg [39:0] img_wr_data_lo;
-    reg [39:0] img_wr_data_hi;
+    reg [79:0] img_wr_row_word;
 
     // 权重写口：11 个 bank x 8 个 group = 88 个 224bit word。
     reg weight_wr_en;
@@ -104,8 +103,7 @@ module conv_subsystem_tb #(
         .done(done),
         .img_wr_en(img_wr_en),
         .img_wr_addr(img_wr_addr),
-        .img_wr_data_lo(img_wr_data_lo),
-        .img_wr_data_hi(img_wr_data_hi),
+        .img_wr_row_data(img_wr_row_word),
         .weight_wr_en(weight_wr_en),
         .weight_wr_bank(weight_wr_bank),
         .weight_wr_addr(weight_wr_addr),
@@ -133,8 +131,7 @@ module conv_subsystem_tb #(
             start = 1'b0;
             img_wr_en = 1'b0;
             img_wr_addr = 5'd0;
-            img_wr_data_lo = 40'd0;
-            img_wr_data_hi = 40'd0;
+            img_wr_row_word = 80'd0;
             weight_wr_en = 1'b0;
             weight_wr_bank = 5'd0;
             weight_wr_addr = 3'd0;
@@ -242,14 +239,12 @@ module conv_subsystem_tb #(
                 @(posedge clk);
                 img_wr_en <= 1'b1;
                 img_wr_addr <= row_idx[4:0];
-                img_wr_data_lo <= row_word[39:0];
-                img_wr_data_hi <= row_word[79:40];
+                img_wr_row_word <= row_word;
             end
             @(posedge clk);
             img_wr_en <= 1'b0;
             img_wr_addr <= 5'd0;
-            img_wr_data_lo <= 40'd0;
-            img_wr_data_hi <= 40'd0;
+            img_wr_row_word <= 80'd0;
         end
     endtask
 

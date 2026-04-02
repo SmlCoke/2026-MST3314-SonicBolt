@@ -42,8 +42,7 @@ module conv_subsystem #(
     // ------------ 输入图像写控制信号 ------------
     input  wire          img_wr_en,        // 输入图像写使能
     input  wire [4:0]    img_wr_addr,      // 输入图像行地址，30 行因此使用 5bit
-    input  wire [39:0]   img_wr_data_lo,   // 一行的低半部分，5 个 INT8 = 40bit
-    input  wire [39:0]   img_wr_data_hi,   // 一行的高半部分，5 个 INT8 = 40bit
+    input  wire [79:0]   img_wr_row_data,  // 输入图像写数据，一行 10 个像素，10 x 8bit = 80bit
 
     // ------------ 权重 SRAM 写控制信号 ------------
     input  wire          weight_wr_en,     // Conv 权重写使能
@@ -105,8 +104,7 @@ module conv_subsystem #(
         // ---------- 输入图写入接口 ----------
         .img_wr_en(img_wr_en),               // in: 输入图逐行写使能
         .img_wr_addr(img_wr_addr),           // in: 写入行地址，范围
-        .img_wr_data_lo(img_wr_data_lo),     // in: 一行的低半部分数据
-        .img_wr_data_hi(img_wr_data_hi),     // in: 一行的高半部分数据
+        .img_wr_row_word(img_wr_row_data),   // in: 一行的完整数据
 
         // ---------- 消费启动接口 ----------
         .start_consume(start),               // in: 启动消费一张新图

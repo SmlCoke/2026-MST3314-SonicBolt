@@ -51,6 +51,8 @@ module conv_param_store (
 
     // weight_rdata[g] : 第 g 个权重 bank 的同步读数据。
     wire [223:0] weight_rdata [0:10];
+    wire [111:0] weight_rdata_lo [0:10];
+    wire [111:0] weight_rdata_hi [0:10];
     // bias_rdata : 偏置 bank 的同步读数据。
     wire [63:0]  bias_rdata;
 
@@ -59,12 +61,13 @@ module conv_param_store (
     wire [10:0] weight_bank_en;
     wire [10:0] weight_bank_wr_en;
     wire [2:0]  weight_bank_addr [0:10];
+    wire [4:0]  weight_bank_macro_addr [0:10];
 
     // 偏置 bank 的访问控制信号。
     wire        bias_bank_sel_hit;
     wire        bias_bank_en;
     wire        bias_bank_wr_en;
-    wire [2:0]  bias_bank_addr;
+    wire [4:0]  bias_bank_addr;
 
     generate
         genvar g_weight;
@@ -76,24 +79,32 @@ module conv_param_store (
             // 每个 bank 只有两种访问来源：
             // 1. 运行时读：所有 bank 同时按当前 group 读
             // 2. 配置时写：只写命中的那个 bank
-            assign weight_bank_en[g_weight]      = weight_rd_en || weight_bank_wr_en[g_weight];
-            assign weight_bank_addr[g_weight]    = weight_rd_en ? weight_rd_group : weight_wr_addr;
+            assign weight_bank_en[g_weight]         = weight_rd_en || weight_bank_wr_en[g_weight];
+            assign weight_bank_addr[g_weight]       = weight_rd_en ? weight_rd_group : weight_wr_addr;
+            assign weight_bank_macro_addr[g_weight] = {2'b00, weight_bank_addr[g_weight]};
 
             // 读数据直接铺到展平总线中对应的 224bit 切片。
+            assign weight_rdata[g_weight] = {weight_rdata_hi[g_weight], weight_rdata_lo[g_weight]};
             assign weight_data_bus[g_weight*224 +: 224] = weight_rdata[g_weight];
 
-            sram_sp #(
-                .DATA_W(224),
-                .DEPTH(8),
-                .ADDR_W(3)
-            ) u_weight_bank (
-                .clk(clk),
-                .rst_n(rst_n),
-                .en(weight_bank_en[g_weight]),
-                .wr_en(weight_bank_wr_en[g_weight]),
-                .addr(weight_bank_addr[g_weight]),
-                .wdata(weight_wr_data),
-                .rdata(weight_rdata[g_weight])
+            S018V3EBCDSP_X8Y4D112_PR #(
+            ) u_weight_bank_lo (
+                .CLK(clk),
+                .CEN(~weight_bank_en[g_weight]),
+                .WEN(~weight_bank_wr_en[g_weight]),
+                .A(weight_bank_macro_addr[g_weight]),
+                .D(weight_wr_data[111:0]),
+                .Q(weight_rdata_lo[g_weight])
+            );
+
+            S018V3EBCDSP_X8Y4D112_PR #(
+            ) u_weight_bank_hi (
+                .CLK(clk),
+                .CEN(~weight_bank_en[g_weight]),
+                .WEN(~weight_bank_wr_en[g_weight]),
+                .A(weight_bank_macro_addr[g_weight]),
+                .D(weight_wr_data[223:112]),
+                .Q(weight_rdata_hi[g_weight])
             );
         end
     endgenerate
@@ -102,20 +113,16 @@ module conv_param_store (
     assign bias_bank_sel_hit = ~bias_wr_bank;
     assign bias_bank_wr_en   = bias_wr_en && bias_bank_sel_hit;
     assign bias_bank_en      = bias_rd_en || bias_bank_wr_en;
-    assign bias_bank_addr    = bias_rd_en ? bias_rd_group : bias_wr_addr;
+    assign bias_bank_addr    = bias_rd_en ? {3'b000, bias_rd_group} : {3'b000, bias_wr_addr};
 
-    sram_sp #(
-        .DATA_W(64),
-        .DEPTH(8),
-        .ADDR_W(3)
+    S018V3EBCDSP_X8Y4D64_PR #(
     ) u_bias_bank (
-        .clk(clk),
-        .rst_n(rst_n),
-        .en(bias_bank_en),
-        .wr_en(bias_bank_wr_en),
-        .addr(bias_bank_addr),
-        .wdata(bias_wr_data),
-        .rdata(bias_rdata)
+        .CLK(clk),
+        .CEN(~bias_bank_en),
+        .WEN(~bias_bank_wr_en),
+        .A(bias_bank_addr),
+        .D(bias_wr_data),
+        .Q(bias_rdata)
     );
 
     assign bias_data_bus = bias_rdata;

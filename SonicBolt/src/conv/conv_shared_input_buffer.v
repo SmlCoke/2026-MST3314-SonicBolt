@@ -37,8 +37,7 @@ module conv_shared_input_buffer (
     // ---------- 输入图写入接口 ----------
     input  wire          img_wr_en,        // 输入图逐行写使能，高电平表示当前拍写入一行
     input  wire [4:0]    img_wr_addr,      // 写入行地址，输入图共 30 行，因此 5bit 足够表示 0~29
-    input  wire [39:0]   img_wr_data_lo,   // 一行前 5 个像素，5 x 8bit = 40bit
-    input  wire [39:0]   img_wr_data_hi,   // 一行后 5 个像素，5 x 8bit = 40bit
+    input  wire [79:0]   img_wr_row_word,   // 一行 10 个像素，10 x 8bit = 80bit
 
     // ---------- 消费启动接口 ----------
     input  wire          start_consume,    // 启动消费当前 SRAM 中的一张新图，并清空上一轮工作集状态
@@ -72,31 +71,24 @@ module conv_shared_input_buffer (
     reg         frame_rd_en_reg;    // 发给单口 SRAM 的同步读使能
     reg  [4:0]  frame_rd_addr_reg;  // 发给单口 SRAM 的同步读地址
 
-    wire [79:0] img_wr_row_word;    // 外部按 lo/hi 两段送入的一行数据，在这里重新拼成 80bit
     wire [79:0] frame_rdata;        // 单口 SRAM 的同步读返回
     wire        frame_en;           // 单口 SRAM 总使能，写输入或发起预取时拉高
     wire [4:0]  frame_addr;         // 单口 SRAM 地址，写入和预取共用同一个地址口
 
     integer idx;
 
-    assign img_wr_row_word = {img_wr_data_hi, img_wr_data_lo};
     assign frame_en        = img_wr_en || frame_rd_en_reg;
     assign frame_addr      = img_wr_en ? img_wr_addr : frame_rd_addr_reg;
 
     // 单口输入 SRAM。
     // 当前版本不再保留双 bank ping-pong，而是采用“先整帧写入，再启动计算”的使用方式。
-    sram_sp #(
-        .DATA_W(ROW_WORD_W),
-        .DEPTH(30),
-        .ADDR_W(5)
-    ) u_frame_store (
-        .clk(clk),
-        .rst_n(rst_n),
-        .en(frame_en),
-        .wr_en(img_wr_en),
-        .addr(frame_addr),
-        .wdata(img_wr_row_word),
-        .rdata(frame_rdata)
+    S018V3EBCDSP_X8Y4D80_PR u_frame_store (
+        .CLK(clk),
+        .CEN(~frame_en),
+        .WEN(~img_wr_en),
+        .A(frame_addr),
+        .D(img_wr_row_word),
+        .Q(frame_rdata)
     );
 
     always @(posedge clk or negedge rst_n) begin

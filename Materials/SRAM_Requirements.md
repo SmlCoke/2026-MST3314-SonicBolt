@@ -9,3 +9,6 @@ SRAM 需求如下：
 | Conv | feature map | 30 | 80bit |
 | DWConv | weight | 8 | 96bit |
 | PWConv | weight | 8 | 128bit |
+| FC     | weight | 8 | 64bit |
+
+(1) depth = 32, width = 112 (2) depth = 32, width = 64 (3) depth = 32, width = 80 (4) depth = 32, width = 96 (5) depth = 32, width = 128
