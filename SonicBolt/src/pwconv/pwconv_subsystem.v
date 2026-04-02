@@ -2,8 +2,8 @@
 /*
  * 模块名称: pwconv_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-03-29
- * 版本: v1.0
+ * 日期: 2026-04-03
+ * 版本: v1.1
  *
  * 功能概述:
  *   PWConv 独立子系统顶层。
@@ -12,6 +12,8 @@
  *   - 输入为 Activation2 之后的 DW 流输出
  *   - 输出为 Activation3 之后的 PW 流输出
  *   - 保持与 Conv1 顶层相近的 start / busy / done / out_stream_* 风格
+ * 版本定位:
+ *   -v1.1 增加了 fire 信号
  */
 module pwconv_subsystem #(
     parameter integer M0      = 69,
@@ -27,6 +29,7 @@ module pwconv_subsystem #(
     input  wire          in_stream_fire,   // 第三层启动信号
     input  wire [3:0]    in_stream_pos,    // 输入 tile 的 pos 编号
     input  wire [2:0]    in_stream_group,  // 输入 tile 的 group 编号
+    input  wire          in_stream_last,   // 输入 tile 是否为最后一个
     input  wire [127:0]  in_stream_data,   // 输入 tile 数据，4 x 2 x 2 x 8bit = 128bit
 
     // ------------ 权重 SRAM 写控制信号 ------------
@@ -129,6 +132,7 @@ module pwconv_subsystem #(
         // ---------- 输入数据流接口 ----------
         .in_stream_valid(in_stream_valid),      // in: 输入 tile 有效
         .in_stream_fire(in_stream_fire),        // in: 输入的启动信号
+        .in_stream_last(in_stream_last),        // in: 输入 tile 是否为最后一个
         .in_stream_pos(in_stream_pos),          // in: 输入 tile 的 pos 编号
         .in_stream_group(in_stream_group),      // in: 输入 tile 的 group 编号
         .even_pos_data(even_pos_data),          // in: 输入数据总线，来自于偶数pos

@@ -3,8 +3,8 @@
 /*
  * 模块名称: cnn_tb
  * 作者: SonicBolt 团队
- * 日期: 2026-04-02
- * 版本: v1.0
+ * 日期: 2026-04-03
+ * 版本: v1.1
  *
  * 功能概述:
  *   面向整个 SonicBolt 系统的 testbench。
@@ -14,14 +14,15 @@
  *   3. 启动一次 feature map 计算，并捕获输出 TILE 日志
  *   4. 检查输出 token 数以及输出流是否出现中断
  *
- * 当前版本说明:
- *   - 当前架构采用 `9 个 pos x 8 个 group = 72 个 token`
- *   - 当前 testbench 采用单帧缓存流程：先装载完整输入图，再启动计算
- *
  * 日志格式:
  *   - 每个有效 tile 输出一行：
  *   - 一个样本结束后输出：
  *       SAMPLE_DONE sample=<n> cycles=<c>
+ *
+ * 版本定位:
+ *   - 当前架构采用 `9 个 pos x 8 个 group = 72 个 token`
+ *   - 当前 testbench 采用单帧缓存流程：先装载完整输入图，再启动计算
+ *   - v1.1 级联了 PWConv 
  */
 
 module cnn_tb #(
@@ -40,6 +41,10 @@ module cnn_tb #(
     localparam integer DWCONV_WEIGHT_WORD_COUNT = 24;
     localparam integer DWCONV_BIAS_WORD_COUNT   = 8;
 
+    // PWConv 层权重/偏置 mem depth
+    localparam integer PWCONV_WEIGHT_WORD_COUNT = 64;
+    localparam integer PWCONV_BIAS_WORD_COUNT   = 8;
+
     // Token 计数
     localparam integer TOKEN_COUNT       = 72;
 
@@ -47,10 +52,8 @@ module cnn_tb #(
     reg clk;
     reg rst_n;
     reg start;
-    wire conv_busy;
-    wire conv_done;
-    wire dwconv_busy;
-    wire dwconv_done;
+    wire busy;
+    wire done;
 
     // 输入图写口：逐行写入 30x10 输入图，每行 80bit。
     reg img_wr_en;
@@ -81,6 +84,18 @@ module cnn_tb #(
     reg [2:0] dwconv_bias_wr_addr;
     reg [63:0] dwconv_bias_wr_data;
 
+    // PWConv权重写口：8 个 bank x 8 个 group = 64 个 128bit word。
+    reg pwconv_weight_wr_en;
+    reg [2:0] pwconv_weight_wr_bank;
+    reg [2:0] pwconv_weight_wr_addr;
+    reg [127:0] pwconv_weight_wr_data;
+
+    // PWConv偏置写口：1 个 bank x 8 个 group = 8 个 64bit word。
+    reg pwconv_bias_wr_en;
+    reg pwconv_bias_wr_bank;
+    reg [2:0] pwconv_bias_wr_addr;
+    reg [63:0] pwconv_bias_wr_data;
+    
     // Conv输出流接口：每拍最多输出一个 512bit tile。
     wire conv_out_stream_valid;
     wire conv_out_stream_last;
@@ -97,6 +112,22 @@ module cnn_tb #(
     wire [2:0] dwconv_out_stream_group;
     wire [127:0] dwconv_out_stream_data;
 
+    // PWConv输出流接口：每拍最多输出一个 128bit tile。
+    wire pwconv_out_stream_valid;
+    wire pwconv_out_stream_last;
+    wire pwconv_out_stream_fire;
+    wire [3:0] pwconv_out_stream_pos;
+    wire [2:0] pwconv_out_stream_group;
+    wire [127:0] pwconv_out_stream_data;
+
+    // CNN输出流接口：每拍最多输出一个 128bit tile。
+    wire out_stream_valid;
+    wire out_stream_last;
+    wire out_stream_fire;
+    wire [3:0] out_stream_pos;
+    wire [2:0] out_stream_group;
+    wire [127:0] out_stream_data;
+
     // 本地测试数据缓存数组。
     reg [79:0]  input_rows_mem        [0:INPUT_ROW_COUNT-1];
     // Conv 层权重
@@ -107,21 +138,34 @@ module cnn_tb #(
     // DWConv 层权重
     reg [95:0] dwconv_weight_words_mem [0:DWCONV_WEIGHT_WORD_COUNT-1];
     // DWConv 层偏置
-    reg [63:0]  dwconv_bias_words_mem   [0:DWCONV_BIAS_WORD_COUNT-1];
+    reg [63:0] dwconv_bias_words_mem   [0:DWCONV_BIAS_WORD_COUNT-1];
+
+    // PWConv 层权重
+    reg [127:0] pwconv_weight_words_mem [0:PWCONV_WEIGHT_WORD_COUNT-1];
+    // PWConv 层偏置
+    reg [63:0]  pwconv_bias_words_mem   [0:PWCONV_BIAS_WORD_COUNT-1];
 
     // 仿真流程控制变量。
     integer timeout_cycles;
     integer cycle_counter;
-    integer tile_counter;
+    integer conv_tile_counter;
+    integer dwconv_tile_counter;
+    integer pwconv_tile_counter;
     integer row_idx;
     integer conv_weight_idx;
     integer conv_bias_idx;
     integer dwconv_weight_idx;
     integer dwconv_bias_idx;
+    integer pwconv_weight_idx;
+    integer pwconv_bias_idx;
     integer runtime_wave_enable;
 
-    reg seen_first_tile;
-    reg stream_gap_error;
+    reg conv_seen_first_tile;
+    reg dwconv_seen_first_tile;
+    reg pwconv_seen_first_tile;
+    reg conv_stream_gap_error;
+    reg dwconv_stream_gap_error;
+    reg pwconv_stream_gap_error;
 
     // 文件路径相关字符串，由 plusargs 拼出。
     string prep_dir;
@@ -130,6 +174,8 @@ module cnn_tb #(
     string conv_bias_mem_path;
     string dwconv_weight_mem_path;
     string dwconv_bias_mem_path;
+    string pwconv_weight_mem_path;
+    string pwconv_bias_mem_path;
     string wave_file_path;
 
     // cnn 实例
@@ -143,8 +189,8 @@ module cnn_tb #(
         .rst_n(rst_n),
         .start(start),
         // 目前只集成了 Conv + DWConv 级联，因此直接用 DWConv 的 busy/done 信号
-        .busy(dwconv_busy),   
-        .done(dwconv_done),
+        .busy(busy),   
+        .done(done),
 
         // ------------ 输入图像写控制信号 ------------
         .img_wr_en(img_wr_en),                      // 输入图像写使能
@@ -175,14 +221,51 @@ module cnn_tb #(
         .dwconv_bias_wr_addr(dwconv_bias_wr_addr),  // DWConv 偏置 group 地址
         .dwconv_bias_wr_data(dwconv_bias_wr_data),  // DWConv 偏置写数据
 
+        // ------------ PWConv 权重 SRAM 写控制信号 ------------
+        .pwconv_weight_wr_en(pwconv_weight_wr_en),      // PWConv 权重写使能
+        .pwconv_weight_wr_bank(pwconv_weight_wr_bank),  // PWConv 权重 bank 编号
+        .pwconv_weight_wr_addr(pwconv_weight_wr_addr),  // PWConv 权重 group 地址
+        .pwconv_weight_wr_data(pwconv_weight_wr_data),  // PWConv 权重写数据
+
+        // ------------ PWConv 偏置 SRAM 写控制信号 ------------
+        .pwconv_bias_wr_en(pwconv_bias_wr_en),      // PWConv 偏置写使能
+        .pwconv_bias_wr_bank(pwconv_bias_wr_bank),  // PWConv 偏置 bank 编号
+        .pwconv_bias_wr_addr(pwconv_bias_wr_addr),  // PWConv 偏置 group 地址
+        .pwconv_bias_wr_data(pwconv_bias_wr_data),  // PWConv 偏置写数据
+
         // ------------ 数据流接口 ------------
-        .out_stream_valid(dwconv_out_stream_valid),      // 输出 tile 有效
-        .out_stream_fire(dwconv_out_stream_fire),        // 输出的下一层启动信号
-        .out_stream_last(dwconv_out_stream_last),        // 输出 tile 是否为最后一个
-        .out_stream_pos(dwconv_out_stream_pos),          // 输出 tile 的 pos 编号
-        .out_stream_group(dwconv_out_stream_group),      // 输出 tile 的 group 编号
-        .out_stream_data(dwconv_out_stream_data)         // 输出 tile 数据
+        .out_stream_valid(out_stream_valid),      // 输出 tile 有效
+        .out_stream_fire(out_stream_fire),        // 输出的下一层启动信号
+        .out_stream_last(out_stream_last),        // 输出 tile 是否为最后一个
+        .out_stream_pos(out_stream_pos),          // 输出 tile 的 pos 编号
+        .out_stream_group(out_stream_group),      // 输出 tile 的 group 编号
+        .out_stream_data(out_stream_data)         // 输出 tile 数据
     );
+
+
+    // hook: testbench 强制访问卷积层输出
+    assign conv_out_stream_valid = cnn_inst.conv_inst.out_stream_valid;
+    assign conv_out_stream_fire = cnn_inst.conv_inst.out_stream_fire;
+    assign conv_out_stream_last = cnn_inst.conv_inst.out_stream_last;
+    assign conv_out_stream_pos = cnn_inst.conv_inst.out_stream_pos;
+    assign conv_out_stream_group = cnn_inst.conv_inst.out_stream_group;
+    assign conv_out_stream_data = cnn_inst.conv_inst.out_stream_data;
+
+    // hook: testbench 强制访问 DWConv 层输出
+    assign dwconv_out_stream_valid = cnn_inst.dwconv_inst.out_stream_valid;
+    assign dwconv_out_stream_fire = cnn_inst.dwconv_inst.out_stream_fire;
+    assign dwconv_out_stream_last = cnn_inst.dwconv_inst.out_stream_last;
+    assign dwconv_out_stream_pos = cnn_inst.dwconv_inst.out_stream_pos;
+    assign dwconv_out_stream_group = cnn_inst.dwconv_inst.out_stream_group;
+    assign dwconv_out_stream_data = cnn_inst.dwconv_inst.out_stream_data;
+
+    // hook: testbench 强制访问 PWConv 层输出
+    assign pwconv_out_stream_valid = cnn_inst.pwconv_inst.out_stream_valid;
+    assign pwconv_out_stream_fire = cnn_inst.pwconv_inst.out_stream_fire;
+    assign pwconv_out_stream_last = cnn_inst.pwconv_inst.out_stream_last;
+    assign pwconv_out_stream_pos = cnn_inst.pwconv_inst.out_stream_pos;
+    assign pwconv_out_stream_group = cnn_inst.pwconv_inst.out_stream_group;
+    assign pwconv_out_stream_data = cnn_inst.pwconv_inst.out_stream_data;
 
     // 生成时钟，默认 10ns 一个周期。
     always #(CLK_HALF_PERIOD) clk = ~clk;
@@ -215,10 +298,25 @@ module cnn_tb #(
             dwconv_bias_wr_addr = 3'd0;
             dwconv_bias_wr_data = 64'd0;
 
+            pwconv_weight_wr_en = 1'b0;
+            pwconv_weight_wr_bank = 3'd0;
+            pwconv_weight_wr_addr = 3'd0;
+            pwconv_weight_wr_data = 128'd0;
+            pwconv_bias_wr_en = 1'b0;
+            pwconv_bias_wr_bank = 1'b0;
+            pwconv_bias_wr_addr = 3'd0;
+            pwconv_bias_wr_data = 64'd0;
+
             cycle_counter = 0;
-            tile_counter = 0;
-            seen_first_tile = 1'b0;
-            stream_gap_error = 1'b0;
+            conv_tile_counter = 0;
+            dwconv_tile_counter = 0;
+            pwconv_tile_counter = 0;
+            conv_seen_first_tile = 1'b0;
+            dwconv_seen_first_tile = 1'b0;
+            pwconv_seen_first_tile = 1'b0;
+            conv_stream_gap_error = 1'b0;
+            dwconv_stream_gap_error = 1'b0;
+            pwconv_stream_gap_error = 1'b0;
         end
     endtask
 
@@ -250,6 +348,8 @@ module cnn_tb #(
             conv_bias_mem_path     = $sformatf("%0s/conv_bias/bias_words.mem", prep_dir);
             dwconv_weight_mem_path = $sformatf("%0s/dwconv_weights/weight_words.mem", prep_dir);
             dwconv_bias_mem_path   = $sformatf("%0s/dwconv_bias/bias_words.mem", prep_dir);
+            pwconv_weight_mem_path = $sformatf("%0s/pwconv_weights/weight_words.mem", prep_dir);
+            pwconv_bias_mem_path   = $sformatf("%0s/pwconv_bias/bias_words.mem", prep_dir);
 
         end
     endtask
@@ -262,6 +362,8 @@ module cnn_tb #(
             $readmemh(conv_bias_mem_path, conv_bias_words_mem);
             $readmemh(dwconv_weight_mem_path, dwconv_weight_words_mem);
             $readmemh(dwconv_bias_mem_path, dwconv_bias_words_mem);
+            $readmemh(pwconv_weight_mem_path, pwconv_weight_words_mem);
+            $readmemh(pwconv_bias_mem_path, pwconv_bias_words_mem);
         end
     endtask
 
@@ -302,6 +404,19 @@ module cnn_tb #(
             dwconv_weight_wr_bank <= 2'd0;
             dwconv_weight_wr_addr <= 3'd0;
             dwconv_weight_wr_data <= 96'd0;
+
+            for (pwconv_weight_idx = 0; pwconv_weight_idx < PWCONV_WEIGHT_WORD_COUNT; pwconv_weight_idx = pwconv_weight_idx + 1) begin
+                @(posedge clk);
+                pwconv_weight_wr_en <= 1'b1;
+                pwconv_weight_wr_bank <= pwconv_weight_idx / 8;
+                pwconv_weight_wr_addr <= pwconv_weight_idx % 8;
+                pwconv_weight_wr_data <= pwconv_weight_words_mem[pwconv_weight_idx];
+            end
+            @(posedge clk);
+            pwconv_weight_wr_en <= 1'b0;
+            pwconv_weight_wr_bank <= 2'd0;
+            pwconv_weight_wr_addr <= 3'd0;
+            pwconv_weight_wr_data <= 128'd0;
         end
     endtask
 
@@ -333,6 +448,20 @@ module cnn_tb #(
             dwconv_bias_wr_bank <= 1'b0;
             dwconv_bias_wr_addr <= 3'd0;
             dwconv_bias_wr_data <= 64'd0;
+
+            for (pwconv_bias_idx = 0; pwconv_bias_idx < PWCONV_BIAS_WORD_COUNT; pwconv_bias_idx = pwconv_bias_idx + 1) begin
+                @(posedge clk);
+                pwconv_bias_wr_en <= 1'b1;
+                pwconv_bias_wr_bank <= 1'b0;
+                pwconv_bias_wr_addr <= pwconv_bias_idx[2:0];
+                pwconv_bias_wr_data <= pwconv_bias_words_mem[pwconv_bias_idx];
+            end
+            @(posedge clk);
+            pwconv_bias_wr_en <= 1'b0;
+            pwconv_bias_wr_bank <= 1'b0;
+            pwconv_bias_wr_addr <= 3'd0;
+            pwconv_bias_wr_data <= 64'd0;
+
         end
     endtask
 
@@ -354,6 +483,7 @@ module cnn_tb #(
         end
     endtask
 
+
     // 拉高 start 一个时钟周期，启动一次新图计算。
     task automatic start_run;
         begin
@@ -367,7 +497,7 @@ module cnn_tb #(
     // 等待 DUT 完成，或者在超时后报错退出。
     task automatic wait_done_or_timeout;
         begin
-            while (!dwconv_done) begin
+            while (!done) begin
                 @(posedge clk);
                 if (cycle_counter > timeout_cycles) begin
                     $display("TB_ERROR timeout  cycles=%0d", cycle_counter);
@@ -378,22 +508,65 @@ module cnn_tb #(
         end
     endtask
 
-    // 统计输出 token，并检查输出流中途是否出现断流。
+    // 全局周期计数。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             cycle_counter <= 0;
-            tile_counter <= 0;
-            seen_first_tile <= 1'b0;
-            stream_gap_error <= 1'b0;
         end else begin
             cycle_counter <= cycle_counter + 1;
-            if (dwconv_out_stream_valid) begin
-                tile_counter <= tile_counter + 1;
-                seen_first_tile <= 1'b1;
-                $display("TILE pos=%0d group=%0d data=%032x", dwconv_out_stream_pos, dwconv_out_stream_group, dwconv_out_stream_data);
-            end else if (seen_first_tile && (tile_counter < TOKEN_COUNT) && !dwconv_done) begin
+        end
+    end
+
+    // Conv 输出统计与断流检测。
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            conv_tile_counter <= 0;
+            conv_seen_first_tile <= 1'b0;
+            conv_stream_gap_error <= 1'b0;
+        end else begin
+            if (conv_out_stream_valid) begin
+                conv_tile_counter <= conv_tile_counter + 1;
+                conv_seen_first_tile <= 1'b1;
+                $display("Conv-Out-Stream: pos=%0d group=%0d data=%032x", conv_out_stream_pos, conv_out_stream_group, conv_out_stream_data);
+            end else if (conv_seen_first_tile && (conv_tile_counter < TOKEN_COUNT)) begin
                 // 接收不到 tile 了，但是 tile 总数小于72，判定为断流
-                stream_gap_error <= 1'b1;
+                conv_stream_gap_error <= 1'b1;
+            end
+        end
+    end
+
+    // DWConv 输出统计与断流检测。
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            dwconv_tile_counter <= 0;
+            dwconv_seen_first_tile <= 1'b0;
+            dwconv_stream_gap_error <= 1'b0;
+        end else begin
+            if (dwconv_out_stream_valid) begin
+                dwconv_tile_counter <= dwconv_tile_counter + 1;
+                dwconv_seen_first_tile <= 1'b1;
+                $display("DWConv-Out-Stream: pos=%0d group=%0d data=%032x", dwconv_out_stream_pos, dwconv_out_stream_group, dwconv_out_stream_data);
+            end else if (dwconv_seen_first_tile && (dwconv_tile_counter < TOKEN_COUNT)) begin
+                // 接收不到 tile 了，但是 tile 总数小于72，判定为断流
+                dwconv_stream_gap_error <= 1'b1;
+            end
+        end
+    end
+
+    // PWConv 输出统计与断流检测。
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            pwconv_tile_counter <= 0;
+            pwconv_seen_first_tile <= 1'b0;
+            pwconv_stream_gap_error <= 1'b0;
+        end else begin
+            if (pwconv_out_stream_valid) begin
+                pwconv_tile_counter <= pwconv_tile_counter + 1;
+                pwconv_seen_first_tile <= 1'b1;
+                $display("PWConv-Out-Stream: pos=%0d group=%0d data=%032x", pwconv_out_stream_pos, pwconv_out_stream_group, pwconv_out_stream_data);
+            end else if (pwconv_seen_first_tile && (pwconv_tile_counter < TOKEN_COUNT)) begin
+                // 接收不到 tile 了，但是 tile 总数小于72，判定为断流
+                pwconv_stream_gap_error <= 1'b1;
             end
         end
     end
@@ -423,13 +596,28 @@ module cnn_tb #(
         start_run();
         wait_done_or_timeout();
 
-        if (tile_counter !== TOKEN_COUNT) begin
-            $display("TB_ERROR tile_count got=%0d expected=%0d", tile_counter, TOKEN_COUNT);
+        if (conv_tile_counter !== TOKEN_COUNT) begin
+            $display("TB_ERROR conv_tile_count got=%0d expected=%0d", conv_tile_counter, TOKEN_COUNT);
             $finish_and_return(4);
         end
 
-        if (stream_gap_error) begin
-            $display("TB_ERROR stream_gap");
+        if (dwconv_tile_counter !== TOKEN_COUNT) begin
+            $display("TB_ERROR dwconv_tile_count got=%0d expected=%0d", dwconv_tile_counter, TOKEN_COUNT);
+            $finish_and_return(4);
+        end
+
+        if (pwconv_tile_counter !== TOKEN_COUNT) begin
+            $display("TB_ERROR pwconv_tile_count got=%0d expected=%0d", pwconv_tile_counter, TOKEN_COUNT);
+            $finish_and_return(4);
+        end
+
+        if (conv_stream_gap_error || dwconv_stream_gap_error || pwconv_stream_gap_error) begin
+            $display(
+                "TB_ERROR stream_gap conv=%0d dwconv=%0d pwconv=%0d",
+                conv_stream_gap_error,
+                dwconv_stream_gap_error,
+                pwconv_stream_gap_error
+            );
             $finish_and_return(5);
         end
 

@@ -32,6 +32,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 SRC_DIR = ROOT_DIR / "SonicBolt" / "src"
 CONV_DIR = ROOT_DIR / "SonicBolt" / "src" / "conv"
 DWCONV_DIR = ROOT_DIR / "SonicBolt" / "src" / "dwconv"
+PWCONV_DIR = ROOT_DIR / "SonicBolt" / "src" / "pwconv"
 UTILS_DIR = ROOT_DIR / "SonicBolt" / "src" / "utils"
 DATA_DIR = ROOT_DIR / "SonicBolt" / "data"
 PREP_DIR = DATA_DIR / "prepared_test"
@@ -43,11 +44,18 @@ TEST_DIR = ROOT_DIR / "SonicBolt" / "results" / "test"
 POS_COUNT = 9
 GROUP_COUNT = 8
 TOKEN_COUNT = POS_COUNT * GROUP_COUNT
-TILE_HEX_LEN = 32 # 4(ch) x 2(row) x 2(col) x 2(hex per byte) = 128
-TILE_RE = re.compile(
-    r"^TILE pos=(?P<pos>\d+) group=(?P<group>\d+) data=(?P<data>[0-9a-fA-FxXzZ]+)$"
+CONV_HEX_LEN = 128 # 4(ch) x 4(row) x 4(col) x 2(hex per byte) = 512bit
+DWC_HEX_LEN = 32 # 4(ch) x 2(row) x 2(col) x 2(hex per byte) = 128bit
+PWC_HEX_LEN = 32 # 4(ch) x 2(row) x 2(col) x 2(hex per byte) = 128bit
+CONV_RE = re.compile(
+    r"^Conv-Out-Stream: pos=(?P<pos>\d+) group=(?P<group>\d+) data=(?P<data>[0-9a-fA-FxXzZ]+)$"
 )
-
+DWC_RE = re.compile(
+    r"^DWConv-Out-Stream: pos=(?P<pos>\d+) group=(?P<group>\d+) data=(?P<data>[0-9a-fA-FxXzZ]+)$"
+)
+PWC_RE = re.compile(
+    r"^PWConv-Out-Stream: pos=(?P<pos>\d+) group=(?P<group>\d+) data=(?P<data>[0-9a-fA-FxXzZ]+)$"
+)
 
 def parse_args() -> argparse.Namespace:
     """解析当前仍然保留的命令行参数。"""
@@ -133,6 +141,7 @@ def compile_testbench() -> Path:
     # 收集 conv 目录下所有 RTL，再追加 testbench 顶层文件。
     source_files = sorted(str(path) for path in CONV_DIR.glob("*.v"))
     source_files += sorted(str(path) for path in DWCONV_DIR.glob("*.v"))
+    source_files += sorted(str(path) for path in PWCONV_DIR.glob("*.v"))
     source_files.extend(str(path) for path in UTILS_DIR.glob("*.v"))
     source_files.append(str(SRC_DIR / "cnn.v"))
     source_files.append(str(SRC_DIR / "cnn_tb.v"))
@@ -146,37 +155,69 @@ def compile_testbench() -> Path:
     return vvp_path
 
 
-def load_golden_tiles() -> Dict[Tuple[int, int], str]:
+def load_golden_tiles() -> Dict[str, Dict[Tuple[int, int], str]]:
     """读取单样本的 golden tile 文件。"""
-    golden_path = PREP_DIR / "samples" / "sample_dwconv_tiles.mem"
-    golden: Dict[Tuple[int, int], str] = {}
-    with golden_path.open("r", encoding="utf-8") as fh:
+    conv_golden_path = PREP_DIR / "samples" / "sample_conv_tiles.mem"
+    dwconv_golden_path = PREP_DIR / "samples" / "sample_dwconv_tiles.mem"
+    pwc_golden_path = PREP_DIR / "samples" / "sample_pwconv_tiles.mem"
+    golden: Dict[str, Dict[Tuple[int, int], str]] = {
+        "conv": {},
+        "dwconv": {},
+        "pwc": {},
+    }
+    with conv_golden_path.open("r", encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line:
                 continue
             # line 的形式是：“<pos> <group> <tile_hex>”
             pos_text, group_text, tile_hex = line.split()
-            golden[(int(pos_text), int(group_text))] = tile_hex.lower().zfill(TILE_HEX_LEN)
+            golden["conv"][(int(pos_text), int(group_text))] = tile_hex.lower().zfill(CONV_HEX_LEN)
+    with dwconv_golden_path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            # line 的形式是：“<pos> <group> <tile_hex>”
+            pos_text, group_text, tile_hex = line.split()
+            golden["dwconv"][(int(pos_text), int(group_text))] = tile_hex.lower().zfill(DWC_HEX_LEN)
+    with pwc_golden_path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            # line 的形式是：“<pos> <group> <tile_hex>”
+            pos_text, group_text, tile_hex = line.split()
+            golden["pwc"][(int(pos_text), int(group_text))] = tile_hex.lower().zfill(PWC_HEX_LEN)
     return golden
 
 
-def parse_sim_tiles(log_path: Path) -> Dict[Tuple[int, int], str]:
+def parse_sim_tiles(log_path: Path) -> Dict[str, Dict[Tuple[int, int], str]]:
     """从仿真日志中提取 testbench 打印出的 TILE 行。"""
-    parsed: Dict[Tuple[int, int], str] = {}
+    parsed: Dict[str, Dict[Tuple[int, int], str]] = {
+        "conv": {},
+        "dwconv": {},
+        "pwc": {},
+    }
     with log_path.open("r", encoding="utf-8") as fh:
         for raw_line in fh:
             line = raw_line.strip()
             # 正则匹配解析 TILE 行，提取 pos、group 和 data 字段
-            match = TILE_RE.match(line)
-            if not match:
-                continue
-            pos = int(match.group("pos"))
-            group = int(match.group("group"))
-            # zfill(x) 在字符串左侧填充 0 ，直到长度达到 x位
-            # 这样做的原因：在硬件仿真（比如 Verilog 的 $display 打印 %h）时，如果高位是 0，有些仿真器会自动省略前面的前导0。
-            data = match.group("data").lower().zfill(TILE_HEX_LEN)
-            parsed[(pos, group)] = data
+            if match := CONV_RE.match(line):
+                pos = int(match.group("pos"))
+                group = int(match.group("group"))
+                data = match.group("data").lower().zfill(CONV_HEX_LEN)
+                parsed["conv"][(pos, group)] = data
+            elif match := DWC_RE.match(line):
+                pos = int(match.group("pos"))
+                group = int(match.group("group"))
+                data = match.group("data").lower().zfill(DWC_HEX_LEN)
+                parsed["dwconv"][(pos, group)] = data
+            elif match := PWC_RE.match(line):
+                pos = int(match.group("pos"))
+                group = int(match.group("group"))
+                data = match.group("data").lower().zfill(PWC_HEX_LEN)
+                parsed["pwc"][(pos, group)] = data
     return parsed
 
 
@@ -186,7 +227,10 @@ def tile_has_unknown(tile_hex: str) -> bool:
     return ("x" in lowered) or ("z" in lowered)
 
 
-def run_single_sample(vvp_path: Path, enable_wave: bool) -> Tuple[Path, Dict[Tuple[int, int], str]]:
+def run_single_sample(
+    vvp_path: Path,
+    enable_wave: bool,
+) -> Tuple[Path, Dict[str, Dict[Tuple[int, int], str]]]:
     """运行唯一的 sample，并返回日志路径和解析后的 tile。"""
     stdout_log = TEST_DIR / "simulation.log"
     stderr_log = TEST_DIR / "simulation_stderr.log"
@@ -211,38 +255,84 @@ def run_single_sample(vvp_path: Path, enable_wave: bool) -> Tuple[Path, Dict[Tup
     return stdout_log, parse_sim_tiles(stdout_log)
 
 
-def compare_sample(sim_tiles: Dict[Tuple[int, int], str]) -> List[str]:
+def compare_sample(sim_tiles: Dict[str, Dict[Tuple[int, int], str]]) -> List[str]:
     """把仿真输出和 golden tile 逐 token 对比，返回 mismatch 列表。"""
     # 加载正确数据
     golden_tiles = load_golden_tiles()
     # 存储不匹配数据的列表
     mismatches: List[str] = []
 
-    if len(sim_tiles) != TOKEN_COUNT:
-        mismatches.append(f"tile count got {len(sim_tiles)}, expected {TOKEN_COUNT}")
+    if len(sim_tiles["conv"]) != TOKEN_COUNT:
+        mismatches.append(f"conv tile count got {len(sim_tiles['conv'])}, expected {TOKEN_COUNT}")
+    if len(sim_tiles["dwconv"]) != TOKEN_COUNT:
+        mismatches.append(f"dwconv tile count got {len(sim_tiles['dwconv'])}, expected {TOKEN_COUNT}")
+    if len(sim_tiles["pwc"]) != TOKEN_COUNT:
+        mismatches.append(f"pwconv tile count got {len(sim_tiles['pwc'])}, expected {TOKEN_COUNT}")
 
     # 72 个 token = 9 个 pos x 8 个 group。
     for pos in range(POS_COUNT):
         for group in range(GROUP_COUNT):
             key = (pos, group)
-            sim_value = sim_tiles.get(key)
-            golden_value = golden_tiles.get(key)
-            if sim_value is None:
-                mismatches.append(f"missing tile pos={pos} group={group}")
-            elif golden_value is None:
-                mismatches.append(f"golden missing pos={pos} group={group}")
-            elif tile_has_unknown(sim_value):
+            
+            # --------- 检测 Conv 的输出结果是否匹配 ---------
+            conv_sim_value = sim_tiles["conv"].get(key)
+            conv_golden_value = golden_tiles["conv"].get(key)
+            if conv_sim_value is None:
+                mismatches.append(f"conv missing tile pos={pos} group={group}")
+            elif conv_golden_value is None:
+                mismatches.append(f"conv golden missing pos={pos} group={group}")
+            elif tile_has_unknown(conv_sim_value):
                 mismatches.append(
-                    f"Unknown tile pos={pos} group={group}\n"
-                    f"  sim   = {sim_value}\n"
-                    f"  golden= {golden_value}"
+                    f"Conv out unknown tile pos={pos} group={group}\n"
+                    f"  sim   = {conv_sim_value}\n"
+                    f"  golden= {conv_golden_value}"
                 )
                 # Python 特性：隐式字符串字面量拼接，即如果多个字符串面值（包括 f-string）相邻放置，中间只有空格、换行或缩进，Python 解析器会自动将它们合并成一个完整的长字符串。
-            elif sim_value != golden_value:
+            elif conv_sim_value != conv_golden_value:
                 mismatches.append(
-                    f"Mismatch pos={pos} group={group}\n"
-                    f"  sim   = {sim_value}\n"
-                    f"  golden= {golden_value}"
+                    f"Conv out mismatch pos={pos} group={group}\n"
+                    f"  sim   = {conv_sim_value}\n"
+                    f"  golden= {conv_golden_value}"
+                )
+
+            # --------- 检测 DWConv 的输出结果是否匹配 ---------
+            dwconv_sim_value = sim_tiles["dwconv"].get(key)
+            dwconv_golden_value = golden_tiles["dwconv"].get(key)
+            if dwconv_sim_value is None:
+                mismatches.append(f"dwconv missing tile pos={pos} group={group}")
+            elif dwconv_golden_value is None:
+                mismatches.append(f"dwconv golden missing pos={pos} group={group}")
+            elif tile_has_unknown(dwconv_sim_value):
+                mismatches.append(
+                    f"DWConv out unknown tile pos={pos} group={group}\n"
+                    f"  sim   = {dwconv_sim_value}\n"
+                    f"  golden= {dwconv_golden_value}"
+                )
+            elif dwconv_sim_value != dwconv_golden_value:
+                mismatches.append(
+                    f"DWConv out mismatch pos={pos} group={group}\n"
+                    f"  sim   = {dwconv_sim_value}\n"
+                    f"  golden= {dwconv_golden_value}"
+                )
+
+            # --------- 检测 PWConv 的输出结果是否匹配 ---------
+            pwconv_sim_value = sim_tiles["pwc"].get(key)
+            pwconv_golden_value = golden_tiles["pwc"].get(key)
+            if pwconv_sim_value is None:
+                mismatches.append(f"pwconv missing tile pos={pos} group={group}")
+            elif pwconv_golden_value is None:
+                mismatches.append(f"pwconv golden missing pos={pos} group={group}")
+            elif tile_has_unknown(pwconv_sim_value):
+                mismatches.append(
+                    f"PWConv out unknown tile pos={pos} group={group}\n"
+                    f"  sim   = {pwconv_sim_value}\n"
+                    f"  golden= {pwconv_golden_value}"
+                )
+            elif pwconv_sim_value != pwconv_golden_value:
+                mismatches.append(
+                    f"PWConv out mismatch pos={pos} group={group}\n"
+                    f"  sim   = {pwconv_sim_value}\n"
+                    f"  golden= {pwconv_golden_value}"
                 )
     return mismatches
 
@@ -306,9 +396,9 @@ def main() -> int:
         "vvp_path": str(vvp_path.resolve()),
         "samples": [
             {
-                "tile_count": len(sim_tiles),
+                "tile_count": len(sim_tiles["conv"]) + len(sim_tiles["dwconv"]) + len(sim_tiles["pwc"]),
                 "log": stdout_log.name,
-                "matched count": len(sim_tiles) - len(mismatches),
+                "matched count": len(sim_tiles["conv"]) + len(sim_tiles["dwconv"]) + len(sim_tiles["pwc"]) - len(mismatches),
                 "matched": matched,
             }
         ],

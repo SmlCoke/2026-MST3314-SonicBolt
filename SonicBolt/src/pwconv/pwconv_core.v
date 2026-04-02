@@ -2,8 +2,8 @@
 /*
  * 模块名称: pwconv_core
  * 作者: SonicBolt 团队
- * 日期: 2026-03-29
- * 版本: v1.0
+ * 日期: 2026-04-03
+ * 版本: v1.q
  *
  * 功能概述:
  *   PWConv 的输入接收、token 调度、参数读取和计算核心拼接。
@@ -24,6 +24,9 @@
  *   - loaded_pos_count = recv_count / 8，表示已有多少个完整 pos tile 可用于计算 
  *   - 当 issue_pos < loaded_pos_count 时，说明当前 pos 已经拼齐，可以继续发射 
  *   - 接收侧负责“仓库里有没有货”，发射侧负责“现在要不要发货”
+ * 
+ * 版本定位:
+    *   - v1.1 修复 fire 信号
  */
 module pwconv_core #(
     parameter integer M0      = 69,
@@ -37,6 +40,7 @@ module pwconv_core #(
     // ---------- 输入数据流接口 ----------
     input  wire          in_stream_valid,          // 输入 tile 有效
     input  wire          in_stream_fire,           // 输入的第三层启动信号
+    input  wire          in_stream_last,           // 输入 tile 是否为整张图最后一个 token
     input  wire [3:0]    in_stream_pos,            // 输入 tile 的 pos 编号
     input  wire [2:0]    in_stream_group,          // 输入 tile 的 group 编号
     input  wire [1023:0] even_pos_data,            // 输入数据总线，来自于偶数pos
@@ -103,6 +107,7 @@ module pwconv_core #(
     // 例如： 一个时钟上升沿， rec_count变为8，则 loaded_pos_count 从0变为1，此时 pos 仍为0
     // 下一个时钟上升沿，检测到 issue_fire = 1，才会更新 issue_pos
     assign issue_fire       = busy && (issue_pos < loaded_pos_count);
+
     // issue_fire 高电平每次只会维持8个时钟周期，之后的下一个上升沿 issue_pos = loaded_pos_count
     // 在这 8 个时钟周期内，issue_group 从0计数到7，发射完一个 pos 的 8 个 group 后，issue_pos 加1，但是此时 loaded_pos_count 也加1，仍然满足 issue_pos < loaded_pos_count 的条件，可以继续发射下一个 pos 的 token
 

@@ -2,8 +2,8 @@
 /*
  * 模块名称: cnn
  * 作者: SonicBolt 团队
- * 日期: 2026-04-02
- * 版本: v1.0
+ * 日期: 2026-04-03
+ * 版本: v1.1
  *
  * 功能概述: SonicBolt 顶层电路
  *
@@ -19,13 +19,16 @@
  *
  * 版本定位:
  *   - v1.0 先实现 Conv-DWConv 级联
+ *   - v1.1 在 v1.0 基础上集成 PWConv，完成三个卷积层的串联
  */
 
 module cnn #(
     parameter integer CONV_M0        = 111,
     parameter integer CONV_SHIFT_N   = 14,
     parameter integer DWCONV_M0      = 59,
-    parameter integer DWCONV_SHIFT_N = 11
+    parameter integer DWCONV_SHIFT_N = 11,
+    parameter integer PWCONV_M0      = 69,
+    parameter integer PWCONV_SHIFT_N = 13
 )(
     input  wire          clk,
     input  wire          rst_n,
@@ -50,6 +53,12 @@ module cnn #(
     input  wire [2:0]    dwconv_weight_wr_addr, // DWConv 权重 group 地址
     input  wire [95:0]   dwconv_weight_wr_data, // DWConv 权重写数据
 
+    // ------------ PWConv 权重 SRAM 写控制信号 ------------
+    input  wire          pwconv_weight_wr_en,   // PWConv 权重写使能
+    input  wire [2:0]    pwconv_weight_wr_bank, // PWConv 权重 bank 编号
+    input  wire [2:0]    pwconv_weight_wr_addr, // PWConv 权重 group 地址
+    input  wire [127:0]  pwconv_weight_wr_data, // PWConv 权重写数据
+
     // ------------ Conv 偏置 SRAM 写控制信号 ------------
     input  wire          conv_bias_wr_en,       // Conv 偏置写使能
     input  wire          conv_bias_wr_bank,     // Conv 偏置 bank 编号
@@ -62,6 +71,12 @@ module cnn #(
     input  wire [2:0]    dwconv_bias_wr_addr,   // DWConv 偏置 group 地址
     input  wire [63:0]   dwconv_bias_wr_data,   // DWConv 偏置写数据
 
+    // ------------ PWConv 偏置 SRAM 写控制信号 ------------
+    input  wire          pwconv_bias_wr_en,     // PWConv 偏置写使能
+    input  wire          pwconv_bias_wr_bank,   // PWConv 偏置 bank 编号
+    input  wire [2:0]    pwconv_bias_wr_addr,   // PWConv 偏置 group 地址
+    input  wire [63:0]   pwconv_bias_wr_data,   // PWConv 偏置写数据
+
     // ------------ 输出数据流接口（当前为 DWConv 输出）------------
     output wire          out_stream_valid, // 输出 tile 有效
     output wire          out_stream_fire,  // 输出的下一层启动信号
@@ -71,17 +86,37 @@ module cnn #(
     output wire [127:0]  out_stream_data   // 输出 tile 数据
 );
 
+    // 三个卷积层状态信号
     wire         conv_busy;
     wire         conv_done;
     wire         dwconv_busy;
     wire         dwconv_done;
+    wire         pwconv_busy;
+    wire         pwconv_done;
 
+    // Conv 子系统输出数据流
     wire         conv_out_stream_valid;
     wire         conv_out_stream_fire;
     wire         conv_out_stream_last;
     wire [3:0]   conv_out_stream_pos;
     wire [2:0]   conv_out_stream_group;
     wire [511:0] conv_out_stream_data;
+
+    // DWConv 子系统输出数据流
+    wire         dwconv_out_stream_valid;
+    wire         dwconv_out_stream_fire;
+    wire         dwconv_out_stream_last;
+    wire [3:0]   dwconv_out_stream_pos;
+    wire [2:0]   dwconv_out_stream_group;
+    wire [127:0] dwconv_out_stream_data;
+
+    // PWConv 子系统输出数据流
+    wire         pwconv_out_stream_valid;
+    wire         pwconv_out_stream_fire;
+    wire         pwconv_out_stream_last;
+    wire [3:0]   pwconv_out_stream_pos;
+    wire [2:0]   pwconv_out_stream_group;
+    wire [127:0] pwconv_out_stream_data;
 
     conv_subsystem #(
         .M0(CONV_M0),
@@ -149,17 +184,64 @@ module cnn #(
         .bias_wr_data(dwconv_bias_wr_data),
 
         // ---------- DWConv 输出数据流接口 ----------
-        .out_stream_valid(out_stream_valid),
-        .out_stream_fire(out_stream_fire),
-        .out_stream_last(out_stream_last),
-        .out_stream_pos(out_stream_pos),
-        .out_stream_group(out_stream_group),
-        .out_stream_data(out_stream_data)
+        .out_stream_valid(dwconv_out_stream_valid),
+        .out_stream_fire(dwconv_out_stream_fire),
+        .out_stream_last(dwconv_out_stream_last),
+        .out_stream_pos(dwconv_out_stream_pos),
+        .out_stream_group(dwconv_out_stream_group),
+        .out_stream_data(dwconv_out_stream_data)
     );
 
-    // 顶层当前只集成到 DWConv，因此完成信号以 DWConv 为准；
-    // busy 则反映 Conv 或 DWConv 任一子系统仍在工作。
-    assign busy = conv_busy || dwconv_busy;
-    assign done = dwconv_done;
+    pwconv_subsystem #(
+        .M0(PWCONV_M0),
+        .SHIFT_N(PWCONV_SHIFT_N)
+    ) pwconv_inst (
+        .clk(clk),
+        .rst_n(rst_n),
+        .busy(pwconv_busy),
+        .done(pwconv_done),
+
+        // ---------- PWConv 输入数据流接口 ----------
+        .in_stream_valid(dwconv_out_stream_valid),
+        .in_stream_fire(dwconv_out_stream_fire),
+        .in_stream_last(dwconv_out_stream_last),
+        .in_stream_pos(dwconv_out_stream_pos),
+        .in_stream_group(dwconv_out_stream_group),
+        .in_stream_data(dwconv_out_stream_data),
+
+        // ------------ PWConv 权重 SRAM 写控制信号 ------------
+        .weight_wr_en(pwconv_weight_wr_en),
+        .weight_wr_bank(pwconv_weight_wr_bank),
+        .weight_wr_addr(pwconv_weight_wr_addr),
+        .weight_wr_data(pwconv_weight_wr_data),
+
+        // ------------ PWConv 偏置 SRAM 写控制信号 ------------
+        .bias_wr_en(pwconv_bias_wr_en),
+        .bias_wr_bank(pwconv_bias_wr_bank),
+        .bias_wr_addr(pwconv_bias_wr_addr),
+        .bias_wr_data(pwconv_bias_wr_data),
+
+        // ---------- PWConv 输出数据流接口 ----------
+        .out_stream_valid(pwconv_out_stream_valid),
+        .out_stream_fire(pwconv_out_stream_fire),
+        .out_stream_last(pwconv_out_stream_last),
+        .out_stream_pos(pwconv_out_stream_pos),
+        .out_stream_group(pwconv_out_stream_group),
+        .out_stream_data(pwconv_out_stream_data)
+    );
+
+
+    // 输出数据流接口直接连接 PWConv 输出，因为当前设计里 PWConv 是最后一级卷积层，后续的 maxpool、FC、sigmoid 等操作尚未集成到顶层。
+    assign out_stream_valid = pwconv_out_stream_valid;
+    assign out_stream_fire  = pwconv_out_stream_fire;
+    assign out_stream_last  = pwconv_out_stream_last;
+    assign out_stream_pos   = pwconv_out_stream_pos;
+    assign out_stream_group = pwconv_out_stream_group;
+    assign out_stream_data  = pwconv_out_stream_data;
+
+    // 顶层当前只集成到 PWConv，因此完成信号以 PWConv 为准；
+    // busy 则反映 Conv, DWConv, PWConv 任一子系统仍在工作。
+    assign busy = conv_busy || dwconv_busy || pwconv_busy;
+    assign done = pwconv_done;
 
 endmodule

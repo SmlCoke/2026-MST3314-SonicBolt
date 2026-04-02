@@ -2,40 +2,36 @@
 /*
  * 模块名称: pwconv_tile_mac_bank_mult
  * 作者: SonicBolt 团队
- * 日期: 2026-04-01
- * 版本: v1.0
+ * 日期: 2026-04-03
+ * 版本: v1.1
  *
  * 功能概述:
  *   - 对单个输出 group 执行 8(group) x 4(out) x 4(spatial) 的局部点积。
  *   - 每个点积包含 4 项 INT8 x INT8 乘法与两级平衡加法树。
  *
  * 三条总线的展平维度顺序（从高维到低维）:
- *   - tile_data_bus  : [group][in_ch_group][spatial][8bit]
- *   - weight_data_bus: [group][out_ch_group][in_ch_group][8bit]
- *   - out_partial_bus: [group][out_ch_group][spatial][18bit]
+ *   - tile_data_bus  : [in_group][channel_of_group][spatial][8bit]
+ *   - weight_data_bus: [in_group][kernel][channel][8bit]
+ *   - out_partial_bus: [in_group][channel_of_group][spatial][18bit]
  *
  * 位宽对应:
  *   - tile_data_bus   = 8 x 4 x 4 x 8  = 1024 bit
  *   - weight_data_bus = 8 x 4 x 4 x 8  = 1024 bit
  *   - out_partial_bus = 8 x 4 x 4 x 18 = 2304 bit
  *
- * 展平索引里常见乘数解释:
- *   - *4   : 一个维度固定 4 路（4 个输入通道 / 4 个输出通道 / 4 个 spatial 位置）
- *   - *16  : 16 = 4 x 4，表示一个 group 内 4x4 个元素
- *            1) 权重里是 4(out) x 4(in)
- *            2) partial 里是 4(out) x 4(spatial)
- *   - *128 : 128bit = 4(in) x 4(spatial) x 8bit，表示一个 group 的完整激活切片
- *
  * 注意:
  *   - group_idx 对应 group（输入组），不是输出组。
  *   - out_idx 对应当前输出 group 内的第几个输出通道（卷积核）。
+ * 
+ * 版本定位:
+ *   - v1.1 修复了部分注释错误，理清了 bus 的维度和索引关系，功能上完全等价于v1.0
  */
 module pwconv_tile_mac_bank_mult (
     input  wire             clk,
     input  wire             rst_n,
-    input  wire [1023:0]    tile_data_bus,      // [group][in][spatial][8bit]
-    input  wire [8*4*4*8-1:0] weight_data_bus,  // [group][out][in][8bit]
-    output reg  [128*18-1:0] out_partial_bus    // [group][out][spatial][18bit]
+    input  wire [1023:0]    tile_data_bus,      // [in_group][channel_of_group][spatial][8bit]
+    input  wire [8*4*4*8-1:0] weight_data_bus,  // [in_group][kernel][channel][8bit]
+    output reg  [128*18-1:0] out_partial_bus    // [in_group][channel_of_group][spatial][18bit]
 );
 
     integer group_idx;

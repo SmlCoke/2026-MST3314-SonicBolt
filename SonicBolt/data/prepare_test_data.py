@@ -123,6 +123,7 @@ def parse_weights(weight_path: Path,
             raise ValueError(f"{weight_path} contains a kernel with {len(kernel)} rows, expected {kernel_h}")
     return kernels
 
+
 # 解析 Conv, DWConv, PWConv 层的偏置参数
 def parse_conv_bias(bias_path: Path) -> List[int]:
     """解析 Conv/DWConv bias 文件，返回长度为 32 的 bias 列表。"""
@@ -142,8 +143,8 @@ def parse_test_layer_output(output_path: Path,
                             output_h: int,
                             output_w: int,) -> List[List[List[int]]]:
     """
-    解析 Test/Out_Conv.txt 以及 Test/Out_DWConv.txt，
-    返回 conv_out[out_ch][out_row][out_col] / dwconv_out[out_ch][out_row][out_col]
+    解析 Test/Out_Conv.txt, Test/Out_DWConv.txt, Test/Out_PWConv.txt，
+    返回 conv_out[out_ch][out_row][out_col] / dwconv_out[out_ch][out_row][out_col] / pwc_out[out_ch][out_row][out_col]
     注意，这里的数据是没有经过 ReLU，但是经过了 SATURATE 的输出
     """
     channels: List[List[List[int]]] = []
@@ -181,6 +182,8 @@ def ensure_dirs() -> None:
     (PREP_DIR / "conv_bias").mkdir(parents=True, exist_ok=True)
     (PREP_DIR / "dwconv_weights").mkdir(parents=True, exist_ok=True)
     (PREP_DIR / "dwconv_bias").mkdir(parents=True, exist_ok=True)
+    (PREP_DIR / "pwconv_weights").mkdir(parents=True, exist_ok=True)
+    (PREP_DIR / "pwconv_bias").mkdir(parents=True, exist_ok=True)
     (PREP_DIR / "samples").mkdir(parents=True, exist_ok=True)
 
 
@@ -250,6 +253,71 @@ def generate_weight_files(weights: List[List[List[int]]],
         "combined_word_count": len(weight_words_lines),
     }
 
+# 单独处理 PWConv 层的权重参数
+def process_pwconv_weights(weight_path: Path) -> dict:
+    """解析 PWConv 权重文件，"""
+    pwconv_word_hex_width = 32  # 128-bit word => 32 hex chars
+    # 所有卷积核
+    kernels: List[List[int]] = []
+    # 当前卷积核
+    current_kernel: List[int] = []
+    with weight_path.open("r", encoding="utf-8") as fh:
+        for index, raw_line in enumerate(fh):
+            line = raw_line.strip()
+            if line:
+                current_kernel = [int(value) for value in line.split()]
+            if len(current_kernel) != 32: 
+                raise ValueError(f"line {index} should have 32 values, but now {len(current_kernel)}")
+            kernels.append(current_kernel)
+    if len(kernels) != 32:
+        raise ValueError(f"{weight_path} should have 32 kernels")
+    
+    pwconv_weight_mem = [[0 for i in range(8)] for j in range(8)]
+    # 每一行地址 4 个卷积核, 对应 4 个输出通道
+    for out_group in range(GROUP_COUNT):
+        # 每一个卷积核被划分为 8 组，每组 4 个通道，对应输入的某四个通道
+        for in_group in range(8):
+            # 提取出第 out_group 个输出通道组的4个卷积核各自的第 in_group 部分的4个INT8
+            bank_kernel_0 = kernels[out_group*4 + 0][in_group * 4 : in_group * 4 + 4]
+            bank_kernel_1 = kernels[out_group*4 + 1][in_group * 4 : in_group * 4 + 4]
+            bank_kernel_2 = kernels[out_group*4 + 2][in_group * 4 : in_group * 4 + 4]
+            bank_kernel_3 = kernels[out_group*4 + 3][in_group * 4 : in_group * 4 + 4]
+            
+            # 转换为大整数形式
+            bank_kernel_0_row = pack_values([to_u8(value) for value in bank_kernel_0], 8)
+            bank_kernel_1_row = pack_values([to_u8(value) for value in bank_kernel_1], 8)
+            bank_kernel_2_row = pack_values([to_u8(value) for value in bank_kernel_2], 8)
+            bank_kernel_3_row = pack_values([to_u8(value) for value in bank_kernel_3], 8)
+            
+            word = 0
+
+            # 拼接出一个完整的字
+            word |= bank_kernel_0_row << 0
+            word |= bank_kernel_1_row << 32
+            word |= bank_kernel_2_row << 64
+            word |= bank_kernel_3_row << 96
+
+            pwconv_weight_mem[in_group][out_group] = word
+    
+    # 写入各个 bank 的 .mem 文件
+    for bank_idx in range(8):
+        bank_path = PREP_DIR / f"pwconv_weights" / f"weight_bank_{bank_idx:02d}.mem"
+        write_lines(bank_path, (f"{row:0{pwconv_word_hex_width}x}" for row in pwconv_weight_mem[bank_idx]))
+    
+    # 写入一个整体大 bank
+    weight_words_lines: List[str] = []
+    for bank_idx in range(8):
+        for out_group in range(GROUP_COUNT):
+            weight_words_lines.append(f"{pwconv_weight_mem[bank_idx][out_group]:0{pwconv_word_hex_width}x}")
+    write_lines(PREP_DIR / f"pwconv_weights" / "weight_words.mem", weight_words_lines)
+
+    return {
+        "bank_count": 8,
+        "depth_per_bank": GROUP_COUNT,
+        "combined_word_count": len(weight_words_lines),
+    }
+
+    
 
 def generate_bias_files(bias: List[int],
                         layer_name: str) -> dict:
@@ -357,6 +425,7 @@ def prepare_single_sample() -> None:
     test_input_path = TEST_DIR / "Input.txt"
     test_out_conv_path = TEST_DIR / "Out_Conv.txt"
     test_out_dwconv_path = TEST_DIR / "Out_DWConv.txt"
+    test_out_pwconv_path = TEST_DIR / "Out_PWConv.txt"
     required_paths = [
         test_input_path,
         test_out_conv_path,
@@ -375,21 +444,27 @@ def prepare_single_sample() -> None:
     # 4. 解析 bias 参数文件
     conv_bias = parse_conv_bias(PARAM_DIR / "Param_Conv_Bias.txt")
     dwconv_bias = parse_conv_bias(PARAM_DIR / "Param_DWConv_Bias.txt")
-    
+    pwconv_bias = parse_conv_bias(PARAM_DIR / "Param_PWConv_Bias.txt")
+
     # 5. 解析输入样本
     test_input_rows = parse_input_sample(test_input_path)
     
     # 6. 解析正确输出结果
     test_conv_out   = parse_test_layer_output(test_out_conv_path, 20, 4)
     test_dwconv_out = parse_test_layer_output(test_out_dwconv_path, 18, 2)
+    test_pwconv_out = parse_test_layer_output(test_out_pwconv_path, 18, 2)
 
     # 7. 生成 weight 预处理文件
     conv_weight_info   = generate_weight_files(conv_weights, 11, 7, "conv")
     dwconv_weight_info = generate_weight_files(dwconv_weights, 3, 3, "dwconv")
+
+    # 单独处理 pwconv 层
+    pwconv_weight_info = process_pwconv_weights(PARAM_DIR / "Param_PWConv_Weight.txt")
     
     # 8. 生成 bias 预处理文件
     conv_bias_info   = generate_bias_files(conv_bias, "conv")
     dwconv_bias_info = generate_bias_files(dwconv_bias, "dwconv")
+    pwconv_bias_info = generate_bias_files(pwconv_bias, "pwconv")
     
     # 9. 生成输入行文件
     input_filename = generate_input_rows_file(test_input_rows)
@@ -397,6 +472,7 @@ def prepare_single_sample() -> None:
     # 10. 生成正确输出文件
     conv_out_filename   = generate_tile_file(test_conv_out, 4, 4, "conv")
     dwconv_out_filename = generate_tile_file(test_dwconv_out, 2, 2, "dwconv")
+    pwconv_out_filename = generate_tile_file(test_pwconv_out, 2, 2, "pwconv")
 
     # 11. 生成 manifest 文件，保留样本信息
     manifest = {
@@ -414,9 +490,12 @@ def prepare_single_sample() -> None:
         "conv_bias": conv_bias_info,
         "dwconv_weights": dwconv_weight_info,
         "dwconv_bias": dwconv_bias_info,
+        "pwconv_weights": pwconv_weight_info,
+        "pwconv_bias": pwconv_bias_info,
         "input_rows_file": f"samples/{input_filename}",
         "conv_out_file": f"samples/{conv_out_filename}",
         "dwconv_out_file": f"samples/{dwconv_out_filename}",
+        "pwconv_out_file": f"smaples/{pwconv_out_filename}"
     }
     write_text_if_changed(
         PREP_DIR / "manifest.json",
