@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_param_store
  * 作者: SonicBolt 团队
- * 日期: 2026-03-30
- * 版本: v2.0
+ * 日期: 2026-04-02
+ * 版本: v2.1
  *
  * 功能概述:
  *   保存 Conv1 整层全部权重和偏置，并按 kernel row 直接输出到 MAC 的 row PE。
@@ -19,6 +19,8 @@
  *   - 每个 weight word 宽度 224bit = 4(ch) x 7(col) x 8bit
  *   - 1 个 bias bank，深度 8，宽度 64bit = 4(ch) x 16bit
  *
+ * 版本定位:
+ *   - v2.1 引入了 Memory Compiler 生成的 SRAM 模块，重构了读写控制逻辑。
  */
 module conv_param_store (
     input  wire          clk,

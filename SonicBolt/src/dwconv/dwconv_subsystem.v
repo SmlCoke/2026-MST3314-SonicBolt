@@ -2,23 +2,22 @@
 /*
  * 模块名称: dwconv_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-03-29
- * 版本: v1.0
+ * 日期: 2026-04-02
+ * 版本: v1.1
  *
  * 功能概述: 基于 pos-major 数据流的 DWConv 子系统顶层
  *
- * 版本定位:
- *   - 本模块只实现 DWConv 层，参数存储语义已经固定为“层内完整参数 SRAM”。
- *   - 本模块内部保存的是 DWConv 整层的全部权重和全部偏置，不是“当前这次推理临时需要的参数”。
- *
  * 主数据流:
- *   Conv 输出的 tile -> 
- *
+ *   Conv 输出的 tile -> DWConv MAC -> DWConv Rescale-ReLU
  *
  * 参数存储:
  *   - 由独立的 dwconv_param_store 管理 DWConv 整层参数。
-  *   - 当前组织为 3 个 weight bank + 1 个 bias bank。
-  *   - 运行时只按 group 读取其中一部分切片。
+ *   - 当前组织为 3 个 weight bank + 1 个 bias bank。
+ *   - 运行时只按 group 读取其中一部分切片。
+ * 版本定位:
+ *   - 本模块只实现 DWConv 层，参数存储语义已经固定为“层内完整参数 SRAM”。
+ *   - 本模块内部保存的是 DWConv 整层的全部权重和全部偏置，不是“当前这次推理临时需要的参数”。
+ *   - v1.1 修补bug: 补齐 fire 信号
  */
 module dwconv_subsystem #(
     parameter integer M0      = 59,
@@ -51,6 +50,7 @@ module dwconv_subsystem #(
 
     // ------------ 输出数据流接口 ------------
     output wire          out_stream_valid, // 输出 tile 有效
+    output wire          out_stream_fire,  // 输出的下一层启动信号
     output wire          out_stream_last,  // 输出 tile 是否是最后一个
     output wire [3:0]    out_stream_pos,   // 输出 tile 的 pos 编号
     output wire [2:0]    out_stream_group, // 输出 tile 的 group 编号
@@ -70,6 +70,7 @@ module dwconv_subsystem #(
     wire [63:0]   bias_data_bus;           // 偏置 SRAM 读出数据总线
 
     wire          tile_valid_int;          // DWConv 输出元数据：有效  
+    wire          tile_fire_int;           // DWConv 输出元数据：下一层启动信号
     wire          tile_last_int;           // DWConv 输出元数据：最后
     wire [3:0]    tile_pos_int;            // DWConv 输出元数据：位置
     wire [2:0]    tile_group_int;          // DWConv 输出元数据：通道组  
@@ -141,6 +142,7 @@ module dwconv_subsystem #(
 
         // ---------- 输出数据流接口 ----------
         .out_stream_valid(tile_valid_int),     // out: 输出元数据：有效
+        .out_stream_fire(tile_fire_int),       // out: 输出元数据：下一层启动信号
         .out_stream_last(tile_last_int),       // out: 输出元数据：最后
         .out_stream_pos(tile_pos_int),         // out: 输出元数据：位置
         .out_stream_group(tile_group_int),     // out: 输出元数据：通道组
@@ -148,6 +150,7 @@ module dwconv_subsystem #(
     );
 
     assign out_stream_valid = tile_valid_int;
+    assign out_stream_fire  = tile_fire_int;
     assign out_stream_last = tile_last_int;    
     assign out_stream_pos   = tile_pos_int;
     assign out_stream_group = tile_group_int;

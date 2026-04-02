@@ -2,8 +2,8 @@
 /*
  * 模块名称: dwconv_param_store
  * 作者: SonicBolt 团队
- * 日期: 2026-03-30
- * 版本: v1.0
+ * 日期: 2026-04-02
+ * 版本: v1.1
  *
  * 功能概述:
  *   保存 DWConv 整层全部权重和偏置，并按 kernel row 直接输出到 MAC 的 row PE。
@@ -17,6 +17,9 @@
  *   - 每个 weight bank 深度 8，对应 group=0..7
  *   - 每个 weight word 宽度 96bit = 4(ch) x 3(col) x 8bit
  *   - 1 个 bias bank，深度 8，宽度 64bit = 4(ch) x 16bit
+ *
+ * 版本定位:
+ *   - v1.1 引入了 Memory Compiler 生成的 SRAM 模块，重构了读写控制逻辑。
  *
  */
 module dwconv_param_store (

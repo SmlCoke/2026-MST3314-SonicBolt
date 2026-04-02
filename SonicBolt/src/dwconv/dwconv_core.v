@@ -2,14 +2,14 @@
 /*
  * 模块名称: dwconv_core
  * 作者: SonicBolt 团队
- * 日期: 2026-03-30
- * 版本: v1.0
+ * 日期: 2026-04-02
+ * 版本: v1.1
  *
  * 功能概述:
  *   DWConv 调度与主计算核心。
  *
  * 设计定位:
- *   - 本模块负责
+ *   - 本模块负责 DWConv 的调度与核心计算
  *   - DWConv 整层参数保存在独立的 dwconv_param_store 中。
  *
  * 当前数据流:
@@ -24,6 +24,9 @@
  *   - in_stream_fire 为启动信号，只比 in_stream_valid 先一个周期到来，用来启动参数 SRAM 的预读。
  *     当信号到来时，SRAM 读使能有效，下一个周期会读出第一组参数(group = 0)
  *   - 本模块 pos/group 仅作为元数据存在，一切计算听从 conv_core 指挥
+ *
+ * 版本定位:
+ *   - v1.1 修补bug: 补齐 fire 信号
  */
 module dwconv_core #(
     parameter integer M0      = 59,
@@ -52,6 +55,7 @@ module dwconv_core #(
 
     // ---------- 输出数据流接口 ----------
     output wire          out_stream_valid,         // 输出元数据：有效  
+    output wire          out_stream_fire,          // 输出元数据：下一层启动信号
     output wire          out_stream_last,          // 输出元数据：last
     output wire [3:0]    out_stream_pos,           // 输出元数据：位置
     output wire [2:0]    out_stream_group,         // 输出元数据：通道组  

@@ -1,6 +1,6 @@
 # DWConv 子系统架构说明
 
-> 当前系统所属版本：SonicBolt: DWConv v1.0
+> 当前系统所属版本：SonicBolt: DWConv v1.1
 
 ## I. 整体架构
 本子系统实现 CNN 加速器中 Conv 层的后续处理：标准 Depthwise Convolution（逐通道的 $3\times 3$ 深度卷积）、量化和 ReLU 激活。它用于承接上一层 Conv 的输出。

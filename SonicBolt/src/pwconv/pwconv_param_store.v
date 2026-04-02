@@ -2,7 +2,8 @@
 /*
  * 模块名称: pwconv_param_store
  * 作者: SonicBolt 团队
- * 日期: 2026-03-29
+ * 日期: 2026-04-02
+ * 版本: v1.1
  *
  * 功能概述:
  *   保存 PWConv 整层权重和偏置，并按输出 group 读出当前 token 所需切片
@@ -18,6 +19,9 @@
  *   - 读权重时: 8 个 bank 同时读取同一个输出 group 地址
  *   - 输出总线按输入 group 顺序拼接，供 MAC 做跨 group 归约
  *   - bias 只有 1 个 bank，因此 bank 端口仅保留接口对齐意义
+ *
+ * 版本定位:
+ *   - v1.1 引入了 Memory Compiler 生成的 SRAM 模块，重构了读写控制逻辑。
  */
 module pwconv_param_store (
     input  wire          clk,
@@ -49,12 +53,12 @@ module pwconv_param_store (
     wire [7:0]  weight_bank_sel_hit;        // 写访问的 weight bank 
     wire [7:0]  weight_bank_en;             // 读写访问的 weight bank 使能
     wire [7:0]  weight_bank_wr_en;          // 写访问的 weight bank 地址；读访问时所有 bank 地址相同
-    wire [2:0]  weight_bank_addr [0:7];
+    wire [4:0]  weight_bank_addr [0:7];
 
     wire        bias_bank_sel_hit;
     wire        bias_bank_en;
     wire        bias_bank_wr_en;
-    wire [2:0]  bias_bank_addr;
+    wire [4:0]  bias_bank_addr;
 
     generate
         genvar g_weight;
@@ -63,23 +67,18 @@ module pwconv_param_store (
             assign weight_bank_sel_hit[g_weight] = (weight_wr_bank == g_weight[2:0]);
             assign weight_bank_wr_en[g_weight]   = weight_wr_en && weight_bank_sel_hit[g_weight];
             assign weight_bank_en[g_weight]      = weight_rd_en || weight_bank_wr_en[g_weight];
-            assign weight_bank_addr[g_weight]    = weight_rd_en ? weight_rd_group : weight_wr_addr;
+            assign weight_bank_addr[g_weight]    = weight_rd_en ? {3'b0, weight_rd_group} : {3'b0, weight_wr_addr};
 
             // 按输入 group 顺序拼接总线：g=0..7 对应 in_group=0..7。
             assign weight_data_bus[g_weight*128 +: 128] = weight_rdata[g_weight];
 
-            sram_sp #(
-                .DATA_W(128),
-                .DEPTH(8),
-                .ADDR_W(3)
-            ) u_weight_bank (
-                .clk(clk),
-                .rst_n(rst_n),
-                .en(weight_bank_en[g_weight]),
-                .wr_en(weight_bank_wr_en[g_weight]),
-                .addr(weight_bank_addr[g_weight]),
-                .wdata(weight_wr_data),
-                .rdata(weight_rdata[g_weight])
+            S018V3EBCDSP_X8Y4D128_PR u_weight_bank (
+                .CLK(clk),
+                .CEN(~weight_bank_en[g_weight]),
+                .WEN(~weight_bank_wr_en[g_weight]),
+                .A(weight_bank_addr[g_weight]),
+                .D(weight_wr_data),
+                .Q(weight_rdata[g_weight])
             );
         end
     endgenerate
@@ -88,20 +87,15 @@ module pwconv_param_store (
     assign bias_bank_sel_hit = ~bias_wr_bank;
     assign bias_bank_wr_en   = bias_wr_en && bias_bank_sel_hit;
     assign bias_bank_en      = bias_rd_en || bias_bank_wr_en;
-    assign bias_bank_addr    = bias_rd_en ? bias_rd_group : bias_wr_addr;
+    assign bias_bank_addr    = bias_rd_en ? {3'b0, bias_rd_group} : {3'b0, bias_wr_addr};
 
-    sram_sp #(
-        .DATA_W(64),
-        .DEPTH(8),
-        .ADDR_W(3)
-    ) u_bias_bank (
-        .clk(clk),
-        .rst_n(rst_n),
-        .en(bias_bank_en),
-        .wr_en(bias_bank_wr_en),
-        .addr(bias_bank_addr),
-        .wdata(bias_wr_data),
-        .rdata(bias_rdata)
+    S018V3EBCDSP_X8Y4D64_PR u_bias_bank (
+        .CLK(clk),
+        .CEN(~bias_bank_en),
+        .WEN(~bias_bank_wr_en),
+        .A(bias_bank_addr),
+        .D(bias_wr_data),
+        .Q(bias_rdata)
     );
 
     assign bias_data_bus = bias_rdata;
