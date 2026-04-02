@@ -46,6 +46,7 @@ module pwconv_tile_mac_bank_accum (
             if (in_valid) begin
                 for (out_idx = 0; out_idx < 4; out_idx = out_idx + 1) begin
                     for (spatial_idx = 0; spatial_idx < 4; spatial_idx = spatial_idx + 1) begin
+                        // spatial 位置固定，输出通道固定，8组部分和进行求和
                         partial_0 = in_partial_bus[((0*16 + out_idx*4 + spatial_idx) * 18) +: 18];
                         partial_1 = in_partial_bus[((1*16 + out_idx*4 + spatial_idx) * 18) +: 18];
                         partial_2 = in_partial_bus[((2*16 + out_idx*4 + spatial_idx) * 18) +: 18];

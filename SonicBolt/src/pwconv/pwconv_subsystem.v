@@ -35,11 +35,13 @@ module pwconv_subsystem #(
     input  wire [2:0]    weight_wr_addr,   // 权重 group 地址，8 个 group 需要 3bit
     input  wire [127:0]  weight_wr_data,   // 权重写数据，4 x 4 x 8bit = 128bit
 
+    // ------------ 偏置 SRAM 写控制信号 ------------
     input  wire          bias_wr_en,       // 偏置写使能
     input  wire          bias_wr_bank,     // 偏置 bank 编号，当前版本只使用 0
     input  wire [2:0]    bias_wr_addr,     // 偏置 group 地址
     input  wire [63:0]   bias_wr_data,     // 偏置写数据，4 x 16bit = 64bit
 
+    // ---------- 输出数据流接口 ----------
     output wire          out_stream_valid, // 输出 tile 有效
     output wire          out_stream_last,  // 输出 tile 是否为最后一个 token
     output wire          out_stream_fire,  // 输出的下一层启动信号
@@ -131,7 +133,6 @@ module pwconv_subsystem #(
         .in_stream_group(in_stream_group),      // in: 输入 tile 的 group 编号
         .even_pos_data(even_pos_data),          // in: 输入数据总线，来自于偶数pos
         .odd_pos_data(odd_pos_data),            // in: 输入数据总线，来自于奇数pos
-        .out_stream_ready(1'b1),                // in: v1 版本暂不回压，默认始终可接收
 
         // ---------- 权重/偏置交互接口 ----------
         .weight_rd_en(weight_rd_en),            // out: DWConv 权重 SRAM 读使能       

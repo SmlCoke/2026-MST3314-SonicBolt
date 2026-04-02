@@ -34,6 +34,7 @@ module pwconv_tile_mac_bias_add (
         end else begin
             for (out_idx = 0; out_idx < 4; out_idx = out_idx + 1) begin
                 for (spatial_idx = 0; spatial_idx < 4; spatial_idx = spatial_idx + 1) begin
+                    // 每个部分和之和结果加上偏置
                     accum_value_21 = in_accum_bus[((out_idx*4 + spatial_idx) * 21) +: 21];
                     bias_value_16  = in_bias_bus[(out_idx * 16) +: 16];
                     accum_value_32 = {{11{accum_value_21[20]}}, accum_value_21};

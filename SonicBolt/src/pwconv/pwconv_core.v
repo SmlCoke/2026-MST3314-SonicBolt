@@ -47,7 +47,7 @@ module pwconv_core #(
     output wire [2:0]       weight_rd_group,       // 读取哪个 group 的权重         
     output wire             bias_rd_en,            // DWConv 偏置 SRAM 读使能    
     output wire [2:0]       bias_rd_group,         // 读取哪个 group 的偏置       
-    input  wire [8*128-1:0] weight_data_bus,       // 权重 SRAM 读出数据总线         
+    input  wire [32*4*8-1:0] weight_data_bus,       // 权重 SRAM 读出数据总线         
     input  wire [63:0]      bias_data_bus,         // 偏置 SRAM 读出数据总线
 
     // ---------- 输出数据流接口 ----------           
@@ -98,7 +98,6 @@ module pwconv_core #(
     // 只要系统 busy 就持续接收输入
     assign input_fire       = busy && in_stream_valid;
     assign loaded_pos_count = recv_count[6:3]; // recv_count / 8 = pos
-    assign out_stream_fire = (loaded_pos_count != 4'd0);
     
     // issue_pos < loaded_pos_count pos 发射 < 输入，发射指令置 1 ，发射至计算单元
     // 例如： 一个时钟上升沿， rec_count变为8，则 loaded_pos_count 从0变为1，此时 pos 仍为0
@@ -198,21 +197,28 @@ module pwconv_core #(
     ) u_rescale_relu (
         .clk(clk),
         .rst_n(rst_n),
-        .in_valid(tile_valid),
-        .in_last(tile_last),
-        .in_pos(tile_pos),
-        .in_group(tile_group),
-        .in_fire(tile_fire),
-        .in_data_bus(tile_accum_bus),
-        .out_valid(quant_valid),
-        .out_last(quant_last),
-        .out_pos(quant_pos),
-        .out_group(quant_group),
-        .out_fire(quant_fire),
-        .out_data_bus(quant_data)
+
+        // ---------- 输入元数据 ----------
+        .in_valid(tile_valid),            // in: 输入 tile 有效
+        .in_last(tile_last),              // in: 当前 token 是否为整张图最后一个 token
+        .in_pos(tile_pos),                // in: 当前 token 的 pos 编号
+        .in_group(tile_group),            // in: 当前 token 的 group 编号
+        .in_fire(tile_fire),              // in: 当前 token 的启动信号
+
+        // ---------- 输入数据(总线) ----------
+        .in_data_bus(tile_accum_bus),     // in: 当前 token 的累加数据总线
+
+        // ---------- 输出元数据 ----------
+        .out_valid(quant_valid),          // out: 输出 tile 有效
+        .out_last(quant_last),            // out: 输出 tile 是否为最后一个 token
+        .out_pos(quant_pos),              // out: 输出 tile 的 pos 编号
+        .out_group(quant_group),          // out: 输出 tile 的 group 编号
+        .out_fire(quant_fire),            // out: 输出 tile 的启动信号
+
+        // ---------- 输出数据(总线) ----------
+        .out_data_bus(quant_data)         // out: 输出 tile 的数据总线
     );
 
-    // out_stream_ready 目前保留接口对齐用途，v1 仍按“输出不回压”处理。
     assign out_stream_valid = quant_valid;
     assign out_stream_last  = quant_last;
     assign out_stream_pos   = quant_pos;

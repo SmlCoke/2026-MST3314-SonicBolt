@@ -42,7 +42,7 @@ module pwconv_param_store (
     input  wire          bias_rd_en,
     input  wire [2:0]    bias_rd_group,
 
-    output wire [8*128-1:0] weight_data_bus, // 4 通道 × 32 输入 = 128bit/通道 × 8 bank
+    output wire [32*4*8-1:0] weight_data_bus, // 4 通道 × 32 输入 = 128bit/通道 × 8 bank
     output wire [63:0]      bias_data_bus
 );
 

@@ -115,6 +115,7 @@ module pwconv_tile_mac (
     // ---------------------------------------------------------------------
     // ------------------------- 第二级流水：stage2 --------------------------
     // ---------------------------------------------------------------------
+    // 利用全部 8 个输入 tile 以及当前 4 个卷积核，计算出 8 组局部乘加结果
     pwconv_tile_mac_bank_mult u_pwconv_tile_mac_bank_mult (
         .clk(clk),
         .rst_n(rst_n),
@@ -209,6 +210,7 @@ module pwconv_tile_mac (
     assign out_last      = stage4_last;
     assign out_pos       = stage4_pos;
     assign out_group     = stage4_group;
+    assign out_fire      = stage4_fire;
     assign out_accum_bus = stage4_accum_bus;
 
 endmodule
