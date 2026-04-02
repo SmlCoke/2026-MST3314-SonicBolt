@@ -2,8 +2,8 @@
 /*
  * 模块名称: pwconv_input_buffer
  * 作者: SonicBolt 团队
- * 日期: 2026-03-29
- * 版本: v1.0
+ * 日期: 2026-04-03
+ * 版本: v1.1
  *
  * 功能概述:
  *   逐点卷积输入侧的双缓冲 tile 缓存。
@@ -16,6 +16,9 @@
  *   - 偶数 pos 写入 even buffer，奇数 pos 写入 odd buffer
  *   - 每个 pos 对应一个完整 32ch x 2 x 2 INT8 tile，共 1024bit
  *   - 每个输入 token 对应其中一个 4ch x 2 x 2 INT8 group，共 128bit
+ *
+ * 版本定位:
+ *   - v1.1 修复 bug, 更改 buf 清零的条件：只在第一个 token 到来的上一个周期（启动信号）时清理，防止buf反复清零
  */
 module pwconv_input_buffer (
     input  wire          clk,
@@ -38,11 +41,12 @@ module pwconv_input_buffer (
             odd_buf  <= 1024'd0;
         end else begin
             // 启动信号到来，则清空缓存区，准备等待第一个tile输入
-            if (in_fire) begin
+            if (in_fire && (in_pos == 4'd0) && (in_group == 3'd0)) begin
                 even_buf <= 1024'd0;
                 odd_buf  <= 1024'd0;
             end
 
+            // capture_en 本质是 in_stream_valid，每一个tile有效时，要下一个时钟周期才能被buf读取
             if (capture_en) begin
                 if (in_pos[0]) begin
                     odd_buf[in_group*128 +: 128] <= in_data;

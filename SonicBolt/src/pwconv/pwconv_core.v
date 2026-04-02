@@ -104,10 +104,10 @@ module pwconv_core #(
     assign loaded_pos_count = recv_count[6:3]; // recv_count / 8 = pos
     
     // issue_pos < loaded_pos_count pos 发射 < 输入，发射指令置 1 ，发射至计算单元
-    // 例如： 一个时钟上升沿， rec_count变为8，则 loaded_pos_count 从0变为1，此时 pos 仍为0
-    // 下一个时钟上升沿，检测到 issue_fire = 1，才会更新 issue_pos
+    // 例如：在8个tile发送过来的下一个时钟上升沿, rec_count变为8, 则 loaded_pos_count 从0变为1, 此时 pos 仍为0
+    // 每一个tile有效时，要下一个时钟周期才能被buf读取，因此rec_count变为8的那个时钟周期，第8个tile刚好被buf读取
+    // 此时 SRAM 读信号有效，下一个周期数据有效，参数有效，发送进入第一级流水
     assign issue_fire       = busy && (issue_pos < loaded_pos_count);
-
     // issue_fire 高电平每次只会维持8个时钟周期，之后的下一个上升沿 issue_pos = loaded_pos_count
     // 在这 8 个时钟周期内，issue_group 从0计数到7，发射完一个 pos 的 8 个 group 后，issue_pos 加1，但是此时 loaded_pos_count 也加1，仍然满足 issue_pos < loaded_pos_count 的条件，可以继续发射下一个 pos 的 token
 
