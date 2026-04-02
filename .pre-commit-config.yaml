@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: custom-version-and-date-check
+        name: Version and V-File Date Check
+        entry: python -X utf8 Scripts/pre_commit.py
+        language: system
+        pass_filenames: false
+        always_run: true
