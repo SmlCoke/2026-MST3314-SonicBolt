@@ -2,8 +2,8 @@
 /*
  * 模块名称: post_process_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-04-05
- * 版本: v1.1
+ * 日期: 2026-04-06
+ * 版本: v1.2
  *
  * 功能概述:
  *   - 后处理子系统顶层：Maxpool -> Flatten -> FC -> Sigmoid
@@ -19,6 +19,7 @@
  *   - v1.0 完成基本功能实现
  *   - v1.1 优化了时序逻辑，删除了部分冗余逻辑，同时恢复 fire 信号作为启动信号的功能地位，
  *      将几个组合逻辑模块优化为流水线，确保逻辑综合优化顺利
+ *   - v1.2 修复了 weight_sram 的时序错误、fc 的位宽错误以及恢复展平层信号
  */
 module post_process_subsystem #(
     parameter integer FC_M0      = 11,
@@ -43,7 +44,7 @@ module post_process_subsystem #(
     input  wire [63:0]  fc_weight_wr_data,
 
     input  wire         fc_bias_wr_en,
-    input  wire [15:0]  fc_bias_wr_data,
+    input  wire [31:0]  fc_bias_wr_data,
 
     // ---------- Sigmoid LUT 写接口 ----------
     input  wire         sigmoid_lut_wr_en,
@@ -134,6 +135,15 @@ module post_process_subsystem #(
         .out_data_bus(maxpool_out_data_int) // out: 输出数据总线
     );
 
+    // 当前最大池化层输出已经是 FC 需要的 4(ch) x INT8 token 形式，
+    // 因此这里直接复用 maxpool 输出作为 flatten 输出，避免再增加冗余模块。
+    assign flatten_out_valid_int = maxpool_out_valid_int;
+    assign flatten_out_last_int  = maxpool_out_last_int;
+    assign flatten_out_pos_int   = maxpool_out_pos_int;
+    assign flatten_out_group_int = maxpool_out_group_int;
+    assign flatten_out_fire_int  = maxpool_out_fire_int;
+    assign flatten_out_data_int  = maxpool_out_data_int;
+
     // 全连接层
     fc #(
         .M0(FC_M0),
@@ -165,7 +175,7 @@ module post_process_subsystem #(
     );
 
     // Sigmoid 激活函数模块
-    sigmoid u_sigmoid (
+    post_process_sigmoid u_sigmoid (
         .clk(clk),
         .rst_n(rst_n),
         .in_valid(fc_out_valid_int),

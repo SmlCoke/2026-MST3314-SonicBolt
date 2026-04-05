@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import re
+import struct
 import textwrap
 from pathlib import Path
 from typing import Iterable, List, Tuple
@@ -23,6 +26,7 @@ ROOT_DIR = Path(__file__).resolve().parent
 PARAM_DIR = ROOT_DIR / "Param"
 TEST_DIR = ROOT_DIR / "Test"
 PREP_DIR = ROOT_DIR / "prepared_test"
+SCALE_FILE = ROOT_DIR / "Scale" / "Scale.txt"
 
 # 当前 CNN / testbench 使用到的固定几何参数。
 INPUT_ROWS = 30
@@ -178,6 +182,39 @@ def parse_test_layer_output(output_path: Path,
     return channels
 
 
+def parse_flat_vector(path: Path, expected_count: int, value_type: type[int] | type[float]) -> List[int] | List[float]:
+    """解析单行向量类文件，返回指定长度的数值列表。"""
+    values: List[int] | List[float] = []
+    with path.open("r", encoding="utf-8") as fh:
+        for raw_line in fh:
+            line = raw_line.strip()
+            if not line:
+                continue
+            values.extend(value_type(token) for token in line.split())
+    if len(values) != expected_count:
+        raise ValueError(f"{path} contains {len(values)} values, expected {expected_count}")
+    return values
+
+
+def parse_named_float(scale_path: Path, field_name: str) -> float:
+    """从 Scale.txt 中提取指定名称的浮点参数。"""
+    pattern = re.compile(rf"{re.escape(field_name)}\s*=\s*([-+eE0-9\.]+)")
+    with scale_path.open("r", encoding="utf-8") as fh:
+        for raw_line in fh:
+            line = raw_line.strip()
+            if not line:
+                continue
+            match = pattern.search(line)
+            if match:
+                return float(match.group(1))
+    raise ValueError(f"Unable to find {field_name} in {scale_path}")
+
+
+def float_to_u32(value: float) -> int:
+    """把 Python float 转成 IEEE754 FP32 对应的 32bit 无符号整数。"""
+    return struct.unpack("<I", struct.pack("<f", value))[0]
+
+
 def ensure_dirs() -> None:
     """确保 prepared_test 下的输出目录存在。"""
     (PREP_DIR / "conv_weights").mkdir(parents=True, exist_ok=True)
@@ -186,6 +223,9 @@ def ensure_dirs() -> None:
     (PREP_DIR / "dwconv_bias").mkdir(parents=True, exist_ok=True)
     (PREP_DIR / "pwconv_weights").mkdir(parents=True, exist_ok=True)
     (PREP_DIR / "pwconv_bias").mkdir(parents=True, exist_ok=True)
+    (PREP_DIR / "fc_weights").mkdir(parents=True, exist_ok=True)
+    (PREP_DIR / "fc_bias").mkdir(parents=True, exist_ok=True)
+    (PREP_DIR / "sigmoid_lut").mkdir(parents=True, exist_ok=True)
     (PREP_DIR / "samples").mkdir(parents=True, exist_ok=True)
 
 
@@ -322,7 +362,7 @@ def process_pwconv_weights(weight_path: Path) -> dict:
 # 单独处理 FC 的权重参数
 def generate_fc_weights(weight_path: Path) -> dict:
     """解析 FC 权重文件，生成对应的 .mem 文件。"""
-    fc_word_hex_width = 8*8/4 # 每个 word 存 8 个 INT8 权重，每个 INT8 用 2 个 hex char 表示
+    fc_word_hex_width = 16 # 每个 word 包含 8 个 INT8 权重，共 64bit = 16 个 hex char
     
     fc_weights = []
     current_weights = []
@@ -342,16 +382,24 @@ def generate_fc_weights(weight_path: Path) -> dict:
         pos = weight_addr // 8
         group = weight_addr % 8
 
-        w1_ch0 = fc_weights[0][pos*8 + group]   # 该组第一个权重在展平权重列表中的位置
-        w1_ch1 = fc_weights[0][pos*8 + group + 9]
-        w1_ch2 = fc_weights[0][pos*8 + group + 18]
-        w1_ch3 = fc_weights[0][pos*8 + group + 27]
-        w2_ch0 = fc_weights[1][pos*8 + group]
-        w2_ch1 = fc_weights[1][pos*8 + group + 9]
-        w2_ch2 = fc_weights[1][pos*8 + group + 18]
-        w2_ch3 = fc_weights[1][pos*8 + group + 27]
+        # FC RTL 中 flatten 索引定义为 idx = ch * 9 + pos
+        # 其中 ch = group * 4 + lane，lane=0..3
+        ch0_idx = (group * 4 + 0) * 9 + pos
+        ch1_idx = (group * 4 + 1) * 9 + pos
+        ch2_idx = (group * 4 + 2) * 9 + pos
+        ch3_idx = (group * 4 + 3) * 9 + pos
 
-        bank_row = [w2_ch3, w2_ch2, w2_ch1, w2_ch0, w1_ch3, w1_ch2, w1_ch1, w1_ch0]
+        w1_ch0 = fc_weights[0][ch0_idx]
+        w1_ch1 = fc_weights[0][ch1_idx]
+        w1_ch2 = fc_weights[0][ch2_idx]
+        w1_ch3 = fc_weights[0][ch3_idx]
+        w2_ch0 = fc_weights[1][ch0_idx]
+        w2_ch1 = fc_weights[1][ch1_idx]
+        w2_ch2 = fc_weights[1][ch2_idx]
+        w2_ch3 = fc_weights[1][ch3_idx]
+
+        # 低 32bit 放 class0 的 4 路权重，高 32bit 放 class1 的 4 路权重
+        bank_row = [w1_ch0, w1_ch1, w1_ch2, w1_ch3, w2_ch0, w2_ch1, w2_ch2, w2_ch3]
 
         word = pack_values((to_u8(value) for value in bank_row), 8)
         weight_words_lines.append(f"{word:0{fc_word_hex_width}x}")
@@ -361,7 +409,7 @@ def generate_fc_weights(weight_path: Path) -> dict:
     return {
         "bank_count": 1,
         "depth_per_bank": 72,
-        "combined_word_count": 64,
+        "combined_word_count": len(weight_words_lines),
     }
 
 def generate_bias_files(bias: List[int],
@@ -458,7 +506,7 @@ def generate_tile_file(output: List[List[List[int]]],
 # 单独处理池化层输出（用展平层输出表示）
 def generate_flatten_file(output_path: Path, layer_name: str) -> str:
     """解析 FC 权重文件，生成对应的 .mem 文件。"""
-    word_hex_width = 4*8/4 # 每个 word 存 8 个 INT8 权重，每个 INT8 用 2 个 hex char 表示
+    word_hex_width = 8 # 每个 token 包含 4 个 INT8，合计 32bit = 8 个 hex char
     
     with output_path.open("r", encoding="utf-8") as fh:
         for index, raw_line in enumerate(fh):
@@ -472,18 +520,50 @@ def generate_flatten_file(output_path: Path, layer_name: str) -> str:
         pos = tile_addr // 8
         group = tile_addr % 8
 
-        res_ch0 = outputs[pos*8 + group]   # 该组第一个权重在展平权重列表中的位置
-        res_ch1 = outputs[pos*8 + group + 9]
-        res_ch2 = outputs[pos*8 + group + 18]
-        res_ch3 = outputs[pos*8 + group + 27]
+        # Maxpool/Flatten 结果同样按 idx = ch * 9 + pos 排列
+        res_ch0 = outputs[(group * 4 + 0) * 9 + pos]
+        res_ch1 = outputs[(group * 4 + 1) * 9 + pos]
+        res_ch2 = outputs[(group * 4 + 2) * 9 + pos]
+        res_ch3 = outputs[(group * 4 + 3) * 9 + pos]
 
-        bank_row = [res_ch3, res_ch2, res_ch1, res_ch0]
+        # Maxpool RTL 输出顺序为低位到高位依次是 ch0, ch1, ch2, ch3
+        bank_row = [res_ch0, res_ch1, res_ch2, res_ch3]
 
         word = pack_values((to_u8(value) for value in bank_row), 8)
-        lines.append(f"{word:0{8}x}")
+        lines.append(f"{pos} {group} {word:0{word_hex_width}x}")
 
     filename = f"sample_{layer_name}_tiles.mem"
     write_lines(PREP_DIR / "samples" / filename, lines)
+    return filename
+
+
+def generate_fc_output_file(output_path: Path) -> str:
+    """根据 Test/Out_Linear.txt 生成 FC 阶段黄金输出文件。"""
+    outputs = parse_flat_vector(output_path, 2, int)
+
+    # FC RTL 输出格式：低 8bit 为 class0，高 8bit 为 class1
+    packed_word = pack_values((to_u8(value) for value in outputs), 8)
+
+    filename = "sample_fc_outputs.mem"
+    write_lines(PREP_DIR / "samples" / filename, [f"{packed_word:04x}"])
+    return filename
+
+# 这里是在根据 FC 输出的 INT8 结果结合 Linear_Out_Scale 计算 Sigmoid 激活值，并生成对应的 LUT 文件。
+def generate_sigmoid_lut(scale_path: Path) -> str:
+    """根据 Linear_Out_Scale 生成 Sigmoid LUT 初始化文件。"""
+    linear_out_scale = parse_named_float(scale_path, "Linear_Out_Scale")
+    lut_lines: List[str] = []
+
+    for raw_value in range(256):
+        # LUT 地址直接使用 FC 输出的 8bit 二进制补码
+        # 注意，这里实在把补码转换为真实的 signed int8 值，才能正确计算 Sigmoid 输出
+        signed_value = raw_value if raw_value < 128 else raw_value - 256
+        real_value = signed_value * linear_out_scale
+        sigmoid_value = 1.0 / (1.0 + math.exp(-real_value))
+        lut_lines.append(f"{float_to_u32(sigmoid_value):08x}")
+
+    filename = "lut_words.mem"
+    write_lines(PREP_DIR / "sigmoid_lut" / filename, lut_lines)
     return filename
     
     
@@ -518,13 +598,25 @@ def prepare_single_sample() -> None:
     test_out_dwconv_path = TEST_DIR / "Out_DWConv.txt"
     test_out_pwconv_path = TEST_DIR / "Out_PWConv.txt"
     test_out_maxpool_path = TEST_DIR / "Out_Flatten.txt"
+    test_out_fc_path = TEST_DIR / "Out_Linear.txt"
+    test_out_sigmoid_path = TEST_DIR / "Out.txt"
     required_paths = [
         test_input_path,
         test_out_conv_path,
         test_out_dwconv_path,
+        test_out_pwconv_path,
         test_out_maxpool_path,
+        test_out_fc_path,
+        test_out_sigmoid_path,
         PARAM_DIR / "Param_Conv_Weight.txt",
         PARAM_DIR / "Param_Conv_Bias.txt",
+        PARAM_DIR / "Param_DWConv_Weight.txt",
+        PARAM_DIR / "Param_DWConv_Bias.txt",
+        PARAM_DIR / "Param_PWConv_Weight.txt",
+        PARAM_DIR / "Param_PWConv_Bias.txt",
+        PARAM_DIR / "Param_Linear_Weight.txt",
+        PARAM_DIR / "Param_Linear_Bias.txt",
+        SCALE_FILE,
     ]
     missing = [str(path) for path in required_paths if not path.exists()]
     if missing:
@@ -573,6 +665,8 @@ def prepare_single_sample() -> None:
 
     # 单独处理Maxpool输出（用展平层输出表示）
     maxpool_out_filename = generate_flatten_file(test_out_maxpool_path, "maxpool")
+    fc_out_filename = generate_fc_output_file(test_out_fc_path)
+    sigmoid_lut_filename = generate_sigmoid_lut(SCALE_FILE)
 
     # 11. 生成 manifest 文件，保留样本信息
     manifest = {
@@ -584,6 +678,10 @@ def prepare_single_sample() -> None:
             "input_file": "Test/Input.txt",
             "conv_output_file": "Test/Out_Conv.txt",
             "dwconv_output_file": "Test/Out_DWConv.txt",
+            "pwconv_output_file": "Test/Out_PWConv.txt",
+            "maxpool_output_file": "Test/Out_Flatten.txt",
+            "fc_output_file": "Test/Out_Linear.txt",
+            "sigmoid_output_file": "Test/Out.txt",
             "note": "Out_Conv/Out_DWConv is already saturated/truncated but still needs ReLU during tile generation",
         },
         "conv_weights": conv_weight_info,
@@ -597,7 +695,10 @@ def prepare_single_sample() -> None:
         "input_rows_file": f"samples/{input_filename}",
         "conv_out_file": f"samples/{conv_out_filename}",
         "dwconv_out_file": f"samples/{dwconv_out_filename}",
-        "pwconv_out_file": f"smaples/{pwconv_out_filename}"
+        "pwconv_out_file": f"samples/{pwconv_out_filename}",
+        "maxpool_out_file": f"samples/{maxpool_out_filename}",
+        "fc_out_file": f"samples/{fc_out_filename}",
+        "sigmoid_lut_file": f"sigmoid_lut/{sigmoid_lut_filename}"
 
     }
     write_text_if_changed(

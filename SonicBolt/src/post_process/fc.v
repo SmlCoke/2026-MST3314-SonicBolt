@@ -1,9 +1,9 @@
-﻿`timescale 1ns / 1ps
+`timescale 1ns / 1ps
 /*
  * 模块名称: fc
  * 作者: SonicBolt 团队
- * 日期: 2026-04-05
- * 版本: v1.1
+ * 日期: 2026-04-06
+ * 版本: v1.2
  *
  * 功能概述:
  *   - 执行全连接层 FC(2,288): INT8 输入向量 -> 2 路 INT32 累加。
@@ -19,6 +19,7 @@
  * 版本定位:
  *   - v1.0 完成基本功
  *   - v1.1 删除了部分冗余信号，并且强制使 MAC 单元和 SATURATE 单元保持一级流水，防止组合逻辑输出
+ *   - v1.2 修正了 bias_wr_data 输入位宽错误
  */
 module fc #(
     parameter integer M0      = 11,
@@ -43,8 +44,7 @@ module fc #(
     input  wire [63:0] weight_wr_data,
 
     input  wire        bias_wr_en,
-    //input  wire        bias_wr_cls,
-    input  wire [15:0] bias_wr_data,
+    input  wire [31:0] bias_wr_data,
 
     // ---------- 输出 valid ----------
     output wire        out_valid,
@@ -90,6 +90,7 @@ module fc #(
 
         // ---------- 输入元数据 ----------
         .in_fire(in_fire),                   // in: 启动 SRAM 访问，提前预读
+        .in_valid(in_valid),                 // in: 当前 token 有效，用于预取下一拍权重
         .in_pos(in_pos),                     // in: 通过 pos/group 定位权重地址
         .in_group(in_group),                 // in: 通过 pos/group 定位权重地址
         
