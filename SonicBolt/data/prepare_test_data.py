@@ -124,9 +124,9 @@ def parse_weights(weight_path: Path,
     return kernels
 
 
-# 解析 Conv, DWConv, PWConv 层的偏置参数
-def parse_conv_bias(bias_path: Path) -> List[int]:
-    """解析 Conv/DWConv bias 文件，返回长度为 32 的 bias 列表。"""
+# 解析 Conv, DWConv, PWConv, FC 层的偏置参数
+def parse_bias(bias_path: Path, layer_name: str) -> List[int]:
+    """解析 Conv/DWConv/PWConv/FC bias 文件，返回长度为 32 的 bias 列表。"""
     values: List[int] = []
     with bias_path.open("r", encoding="utf-8") as fh:
         for raw_line in fh:
@@ -134,8 +134,10 @@ def parse_conv_bias(bias_path: Path) -> List[int]:
             if not line:
                 continue
             values.extend(int(token) for token in line.split())
-    if len(values) != 32:
+    if layer_name in ["conv", "dwconv", "pwconv"] and len(values) != 32:
         raise ValueError(f"{bias_path} contains {len(values)} bias values, expected 32")
+    elif layer_name == "fc" and len(values) != 2:
+        raise ValueError(f"{bias_path} contains {len(values)} bias values, expected 2")
     return values
 
 
@@ -317,11 +319,68 @@ def process_pwconv_weights(weight_path: Path) -> dict:
         "combined_word_count": len(weight_words_lines),
     }
 
+# 单独处理 FC 的权重参数
+def generate_fc_weights(weight_path: Path) -> dict:
+    """解析 FC 权重文件，生成对应的 .mem 文件。"""
+    fc_word_hex_width = 8*8/4 # 每个 word 存 8 个 INT8 权重，每个 INT8 用 2 个 hex char 表示
     
+    fc_weights = []
+    current_weights = []
+    with weight_path.open("r", encoding="utf-8") as fh:
+        for index, raw_line in enumerate(fh):
+            line = raw_line.strip()
+            if line:
+                current_weights = [int(value) for value in line.split()]
+            if len(current_weights) != 288:
+                raise ValueError(f"line {index} should have 288 values, but now {len(current_weights)}")
+            fc_weights.append(current_weights)
+    if len(fc_weights) != 2:
+        raise ValueError(f"{weight_path} should have 2 rows of weights")
+    
+    weight_words_lines = []
+    for weight_addr in range(72):
+        pos = weight_addr // 8
+        group = weight_addr % 8
+
+        w1_ch0 = fc_weights[0][pos*8 + group]   # 该组第一个权重在展平权重列表中的位置
+        w1_ch1 = fc_weights[0][pos*8 + group + 9]
+        w1_ch2 = fc_weights[0][pos*8 + group + 18]
+        w1_ch3 = fc_weights[0][pos*8 + group + 27]
+        w2_ch0 = fc_weights[1][pos*8 + group]
+        w2_ch1 = fc_weights[1][pos*8 + group + 9]
+        w2_ch2 = fc_weights[1][pos*8 + group + 18]
+        w2_ch3 = fc_weights[1][pos*8 + group + 27]
+
+        bank_row = [w2_ch3, w2_ch2, w2_ch1, w2_ch0, w1_ch3, w1_ch2, w1_ch1, w1_ch0]
+
+        word = pack_values((to_u8(value) for value in bank_row), 8)
+        weight_words_lines.append(f"{word:0{fc_word_hex_width}x}")
+
+    write_lines(PREP_DIR / f"fc_weights" / "weight_words.mem", weight_words_lines)
+    
+    return {
+        "bank_count": 1,
+        "depth_per_bank": 72,
+        "combined_word_count": 64,
+    }
 
 def generate_bias_files(bias: List[int],
                         layer_name: str) -> dict:
     """生成 Conv/DWConv bias bank 文件。"""
+    # 处理全连接层偏置
+    if layer_name == "fc":
+        if len(bias) != 2:
+            raise ValueError(f"FC bias should have 2 values, but got {len(bias)}")
+        values = [to_u16(value) for value in bias]
+        word = pack_values(values, 16)
+        write_lines(PREP_DIR / "fc_bias" / "bias_words.mem", [f"{word:08x}"])
+        return {
+            "bank_count": 1,
+            "depth_per_bank": 1,
+            "combined_word_count": 1,
+        }
+    
+    # 处理 Conv/DWConv/PWConv 层偏置
     bias_bank_words: List[int] = [0 for _ in range(GROUP_COUNT)]
     # bias mem 只有一个 bank
     # 逐 group 填充数据
@@ -396,6 +455,38 @@ def generate_tile_file(output: List[List[List[int]]],
     write_lines(PREP_DIR / "samples" / filename, lines)
     return filename
 
+# 单独处理池化层输出（用展平层输出表示）
+def generate_flatten_file(output_path: Path, layer_name: str) -> str:
+    """解析 FC 权重文件，生成对应的 .mem 文件。"""
+    word_hex_width = 4*8/4 # 每个 word 存 8 个 INT8 权重，每个 INT8 用 2 个 hex char 表示
+    
+    with output_path.open("r", encoding="utf-8") as fh:
+        for index, raw_line in enumerate(fh):
+            line = raw_line.strip()
+            outputs = [int(value) for value in line.split()]
+            if len(outputs) != 288:
+                raise ValueError(f"line {index} should have 288 values, but now {len(outputs)}")
+
+    lines = []
+    for tile_addr in range(72):
+        pos = tile_addr // 8
+        group = tile_addr % 8
+
+        res_ch0 = outputs[pos*8 + group]   # 该组第一个权重在展平权重列表中的位置
+        res_ch1 = outputs[pos*8 + group + 9]
+        res_ch2 = outputs[pos*8 + group + 18]
+        res_ch3 = outputs[pos*8 + group + 27]
+
+        bank_row = [res_ch3, res_ch2, res_ch1, res_ch0]
+
+        word = pack_values((to_u8(value) for value in bank_row), 8)
+        lines.append(f"{word:0{8}x}")
+
+    filename = f"sample_{layer_name}_tiles.mem"
+    write_lines(PREP_DIR / "samples" / filename, lines)
+    return filename
+    
+    
 def add_box_field(lines: List[str], label: str, value: str, wrap_width: int = 54) -> None:
     """给终端摘要框追加一个自动换行的字段。"""
     prefix = f"{label:<12}: "
@@ -426,10 +517,12 @@ def prepare_single_sample() -> None:
     test_out_conv_path = TEST_DIR / "Out_Conv.txt"
     test_out_dwconv_path = TEST_DIR / "Out_DWConv.txt"
     test_out_pwconv_path = TEST_DIR / "Out_PWConv.txt"
+    test_out_maxpool_path = TEST_DIR / "Out_Flatten.txt"
     required_paths = [
         test_input_path,
         test_out_conv_path,
         test_out_dwconv_path,
+        test_out_maxpool_path,
         PARAM_DIR / "Param_Conv_Weight.txt",
         PARAM_DIR / "Param_Conv_Bias.txt",
     ]
@@ -442,9 +535,10 @@ def prepare_single_sample() -> None:
     dwconv_weights = parse_weights(PARAM_DIR / "Param_DWConv_Weight.txt", 3, 3)  
     
     # 4. 解析 bias 参数文件
-    conv_bias = parse_conv_bias(PARAM_DIR / "Param_Conv_Bias.txt")
-    dwconv_bias = parse_conv_bias(PARAM_DIR / "Param_DWConv_Bias.txt")
-    pwconv_bias = parse_conv_bias(PARAM_DIR / "Param_PWConv_Bias.txt")
+    conv_bias = parse_bias(PARAM_DIR / "Param_Conv_Bias.txt", "conv")
+    dwconv_bias = parse_bias(PARAM_DIR / "Param_DWConv_Bias.txt", "dwconv")
+    pwconv_bias = parse_bias(PARAM_DIR / "Param_PWConv_Bias.txt", "pwconv")
+    fc_bias = parse_bias(PARAM_DIR / "Param_Linear_Bias.txt", "fc")
 
     # 5. 解析输入样本
     test_input_rows = parse_input_sample(test_input_path)
@@ -460,11 +554,14 @@ def prepare_single_sample() -> None:
 
     # 单独处理 pwconv 层
     pwconv_weight_info = process_pwconv_weights(PARAM_DIR / "Param_PWConv_Weight.txt")
-    
+    # 单独处理 fc 层
+    fc_weight_info = generate_fc_weights(PARAM_DIR / "Param_Linear_Weight.txt")
+
     # 8. 生成 bias 预处理文件
     conv_bias_info   = generate_bias_files(conv_bias, "conv")
     dwconv_bias_info = generate_bias_files(dwconv_bias, "dwconv")
     pwconv_bias_info = generate_bias_files(pwconv_bias, "pwconv")
+    fc_bias_info = generate_bias_files(fc_bias, "fc")
     
     # 9. 生成输入行文件
     input_filename = generate_input_rows_file(test_input_rows)
@@ -473,6 +570,9 @@ def prepare_single_sample() -> None:
     conv_out_filename   = generate_tile_file(test_conv_out, 4, 4, "conv")
     dwconv_out_filename = generate_tile_file(test_dwconv_out, 2, 2, "dwconv")
     pwconv_out_filename = generate_tile_file(test_pwconv_out, 2, 2, "pwconv")
+
+    # 单独处理Maxpool输出（用展平层输出表示）
+    maxpool_out_filename = generate_flatten_file(test_out_maxpool_path, "maxpool")
 
     # 11. 生成 manifest 文件，保留样本信息
     manifest = {
@@ -492,10 +592,13 @@ def prepare_single_sample() -> None:
         "dwconv_bias": dwconv_bias_info,
         "pwconv_weights": pwconv_weight_info,
         "pwconv_bias": pwconv_bias_info,
+        "fc_weights": fc_weight_info,
+        "fc_bias": fc_bias_info,
         "input_rows_file": f"samples/{input_filename}",
         "conv_out_file": f"samples/{conv_out_filename}",
         "dwconv_out_file": f"samples/{dwconv_out_filename}",
         "pwconv_out_file": f"smaples/{pwconv_out_filename}"
+
     }
     write_text_if_changed(
         PREP_DIR / "manifest.json",
