@@ -1,15 +1,15 @@
 `timescale 1ns / 1ps
 /*
- * 模块名称: post_process_fc_bias_store
+ * 模块名称: fc_bias_store
  * 作者: SonicBolt 团队
- * 日期: 2026-04-03
+ * 日期: 2026-04-05
  * 版本: v1.0
  *
  * 功能概述:
  *   - 维护 FC 的两路 bias 存储（class0/class1）
  *   - 采用顺序写入：第 1 次写 class0，第 2 次写 class1
  */
-module post_process_fc_bias_store (
+module fc_bias_store (
     input  wire               clk,
     input  wire               rst_n,
 

@@ -2,8 +2,8 @@
 /*
  * 模块名称: post_process_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-04-02
- * 版本: v1.0
+ * 日期: 2026-04-05
+ * 版本: v1.1
  *
  * 功能概述:
  *   - 后处理子系统顶层：Maxpool -> Flatten -> FC -> Sigmoid
@@ -13,7 +13,12 @@
  * 设计说明:
  *   - 输入一个 tile 即开始流式处理，不等待整帧缓存
  *   - busy=1 期间，禁止覆盖 FC 权重/Bias 与 Sigmoid LUT
- *   - done 在 Sigmoid 输出最后一个 token 时拉高 1 拍
+ *   - FC 到 Sigmoid 以及最终输出阶段只保留 valid 与数据总线
+ *
+ * 版本定位:
+ *   - v1.0 完成基本功能实现
+ *   - v1.1 优化了时序逻辑，删除了部分冗余逻辑，同时恢复 fire 信号作为启动信号的功能地位，
+ *      将几个组合逻辑模块优化为流水线，确保逻辑综合优化顺利
  */
 module post_process_subsystem #(
     parameter integer FC_M0      = 11,
@@ -47,10 +52,6 @@ module post_process_subsystem #(
 
     // ---------- 输出数据流接口 ----------
     output wire         out_stream_valid,
-    output wire         out_stream_last,
-    output wire [3:0]   out_stream_pos,
-    output wire [2:0]   out_stream_group,
-    output wire         out_stream_fire,
     output wire [63:0]  out_stream_data
 );
 
@@ -79,18 +80,10 @@ module post_process_subsystem #(
 
     // ---------- FC 内部流 ----------
     wire         fc_out_valid_int;
-    wire         fc_out_last_int;
-    wire [3:0]   fc_out_pos_int;
-    wire [2:0]   fc_out_group_int;
-    wire         fc_out_fire_int;
     wire [15:0]  fc_out_data_int;
 
     // ---------- Sigmoid 内部流 ----------
     wire         sigmoid_out_valid_int;
-    wire         sigmoid_out_last_int;
-    wire [3:0]   sigmoid_out_pos_int;
-    wire [2:0]   sigmoid_out_group_int;
-    wire         sigmoid_out_fire_int;
     wire [63:0]  sigmoid_out_data_int;
 
     // 忙于处理当前图时，禁止覆盖本层参数。
@@ -100,7 +93,7 @@ module post_process_subsystem #(
 
     // 子系统忙闲状态：
     // - 收到本帧首个有效 token 后 busy 拉高
-    // - Sigmoid 输出最后一个 token 时 done 脉冲 + busy 清零
+    // - Sigmoid 只输出单个结果，因此 valid 到来即可视为本次后处理完成
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             busy_reg <= 1'b0;
@@ -108,7 +101,8 @@ module post_process_subsystem #(
         end else begin
             done_reg <= 1'b0;
 
-            if (sigmoid_out_valid_int && sigmoid_out_last_int) begin
+            if (sigmoid_out_valid_int) begin
+                // Sigmoid 输出有效，说明本次后处理完成
                 busy_reg <= 1'b0;
                 done_reg <= 1'b1;
             end else if (!busy_reg && in_stream_valid) begin
@@ -117,82 +111,69 @@ module post_process_subsystem #(
         end
     end
 
-    post_process_maxpool u_post_process_maxpool (
+    // 最大池化层，对输入的 4x4 窗口进行池化，输出 4 个通道的结果。
+    // 内置一级流水线
+    maxpool u_maxpool (
         .clk(clk),
         .rst_n(rst_n),
-        .in_valid(in_stream_valid),
-        .in_last(in_stream_last),
-        .in_pos(in_stream_pos),
-        .in_group(in_stream_group),
-        .in_fire(in_stream_fire),
-        .in_data_bus(in_stream_data),
-        .out_valid(maxpool_out_valid_int),
-        .out_last(maxpool_out_last_int),
-        .out_pos(maxpool_out_pos_int),
-        .out_group(maxpool_out_group_int),
-        .out_fire(maxpool_out_fire_int),
-        .out_data_bus(maxpool_out_data_int)
+        
+        // ---------- 输入数据流接口 ----------
+        .in_valid(in_stream_valid),         // in: 输入 tile 有效
+        .in_last(in_stream_last),           // in: 输入 tile 是否是最后一个
+        .in_pos(in_stream_pos),             // in: 输入 tile 位置
+        .in_group(in_stream_group),         // in: 输入 tile 通道组
+        .in_fire(in_stream_fire),           // in: 启动信号
+        .in_data_bus(in_stream_data),       // in: 输入数据总线
+
+        // ---------- 输出数据流接口 ----------
+        .out_valid(maxpool_out_valid_int),  // out: 输出 tile 有效
+        .out_last(maxpool_out_last_int),    // out: 输出 tile 是否是最后一个
+        .out_pos(maxpool_out_pos_int),      // out: 输出 tile 位置
+        .out_group(maxpool_out_group_int),  // out: 输出 tile 通道组
+        .out_fire(maxpool_out_fire_int),    // out: 启动信号
+        .out_data_bus(maxpool_out_data_int) // out: 输出数据总线
     );
 
-    post_process_flatten u_post_process_flatten (
-        .clk(clk),
-        .rst_n(rst_n),
-        .in_valid(maxpool_out_valid_int),
-        .in_last(maxpool_out_last_int),
-        .in_pos(maxpool_out_pos_int),
-        .in_group(maxpool_out_group_int),
-        .in_fire(maxpool_out_fire_int),
-        .in_data_bus(maxpool_out_data_int),
-        .out_valid(flatten_out_valid_int),
-        .out_last(flatten_out_last_int),
-        .out_pos(flatten_out_pos_int),
-        .out_group(flatten_out_group_int),
-        .out_fire(flatten_out_fire_int),
-        .out_data_bus(flatten_out_data_int)
-    );
-
-    post_process_fc #(
+    // 全连接层
+    fc #(
         .M0(FC_M0),
         .SHIFT_N(FC_SHIFT_N)
-    ) u_post_process_fc (
+    ) u_fc (
         .clk(clk),
         .rst_n(rst_n),
-        .in_valid(flatten_out_valid_int),
-        .in_last(flatten_out_last_int),
-        .in_pos(flatten_out_pos_int),
-        .in_group(flatten_out_group_int),
-        .in_fire(flatten_out_fire_int),
-        .in_data_bus(flatten_out_data_int),
-        .weight_wr_en(fc_weight_store_wr_en),
-        .weight_wr_addr(fc_weight_wr_addr),
-        .weight_wr_data(fc_weight_wr_data),
-        .bias_wr_en(fc_bias_store_wr_en),
-        .bias_wr_data(fc_bias_wr_data),
-        .out_valid(fc_out_valid_int),
-        .out_last(fc_out_last_int),
-        .out_pos(fc_out_pos_int),
-        .out_group(fc_out_group_int),
-        .out_fire(fc_out_fire_int),
-        .out_data_bus(fc_out_data_int)
+
+        // ---------- 输入元数据 ----------
+        .in_valid(flatten_out_valid_int),      // in: 输入 tile 有效
+        .in_last(flatten_out_last_int),        // in: 输入 tile 是否是最后一个
+        .in_pos(flatten_out_pos_int),          // in: 输入 tile 位置
+        .in_group(flatten_out_group_int),      // in: 输入 tile 通道组
+        .in_fire(flatten_out_fire_int),        // in: 启动信号
+
+        // ---------- 输入数据 ----------
+        .in_data_bus(flatten_out_data_int),    // in: 输入数据总线
+
+        // ---------- 权重/偏置写接口 ----------
+        .weight_wr_en(fc_weight_store_wr_en),  // in: 权重写使能
+        .weight_wr_addr(fc_weight_wr_addr),    // in: 写入哪个权重地址，范围 0..71
+        .weight_wr_data(fc_weight_wr_data),    // in: 权重写数据，72 x 64bit = 576byte
+        .bias_wr_en(fc_bias_store_wr_en),      // in: 偏置写使能
+        .bias_wr_data(fc_bias_wr_data),        // in: 偏置写数据，2 x 16bit = 4byte
+
+        // ---------- 输出数据 ----------
+        .out_valid(fc_out_valid_int),         // out: 输出有效
+        .out_data_bus(fc_out_data_int)        // out: 输出数据总线
     );
 
-    post_process_sigmoid u_post_process_sigmoid (
+    // Sigmoid 激活函数模块
+    sigmoid u_sigmoid (
         .clk(clk),
         .rst_n(rst_n),
         .in_valid(fc_out_valid_int),
-        .in_last(fc_out_last_int),
-        .in_pos(fc_out_pos_int),
-        .in_group(fc_out_group_int),
-        .in_fire(fc_out_fire_int),
         .in_data_bus(fc_out_data_int),
         .lut_wr_en(sigmoid_lut_store_wr_en),
         .lut_wr_addr(sigmoid_lut_wr_addr),
         .lut_wr_data(sigmoid_lut_wr_data),
         .out_valid(sigmoid_out_valid_int),
-        .out_last(sigmoid_out_last_int),
-        .out_pos(sigmoid_out_pos_int),
-        .out_group(sigmoid_out_group_int),
-        .out_fire(sigmoid_out_fire_int),
         .out_data_bus(sigmoid_out_data_int)
     );
 
@@ -200,10 +181,6 @@ module post_process_subsystem #(
     assign done = done_reg;
 
     assign out_stream_valid = sigmoid_out_valid_int;
-    assign out_stream_last  = sigmoid_out_last_int;
-    assign out_stream_pos   = sigmoid_out_pos_int;
-    assign out_stream_group = sigmoid_out_group_int;
-    assign out_stream_fire  = sigmoid_out_fire_int;
     assign out_stream_data  = sigmoid_out_data_int;
 
 endmodule

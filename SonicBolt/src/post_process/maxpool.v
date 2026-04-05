@@ -1,8 +1,8 @@
 `timescale 1ns / 1ps
 /*
- * 模块名称: post_process_maxpool
+ * 模块名称: maxpool
  * 作者: SonicBolt 团队
- * 日期: 2026-04-02
+ * 日期: 2026-04-05
  * 版本: v1.0
  *
  * 功能概述:
@@ -14,7 +14,7 @@
  *   - 每个通道独立完成 4 个点位的比较归约，共 4 个通道
  *   - metadata 通过 meta_pipe 打一拍，与数据寄存输出保持同拍对齐
  */
-module post_process_maxpool (
+module maxpool (
     input  wire         clk,
     input  wire         rst_n,
 
@@ -36,10 +36,10 @@ module post_process_maxpool (
     output wire         out_fire,
 
     // ---------- 输出数据 ----------
-    output wire [31:0]  out_data_bus
+    output reg  [31:0]  out_data_bus
 );
 
-    integer lane_idx;
+    integer ch_idx;
 
     reg signed [7:0] value_0;
     reg signed [7:0] value_1;
@@ -50,33 +50,32 @@ module post_process_maxpool (
     reg signed [7:0] max_l1_1;
     reg signed [7:0] max_value;
 
-    reg [31:0] stage1_data_bus;
-
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            stage1_data_bus <= 32'd0;
+            out_data_bus <= 32'd0;
         end else begin
             if (in_valid) begin
                 // 4 通道并行
-                for (lane_idx = 0; lane_idx < 4; lane_idx = lane_idx + 1) begin
-                    value_0 = in_data_bus[((lane_idx * 4 + 0) * 8) +: 8];//第一个通道第一个值
-                    value_1 = in_data_bus[((lane_idx * 4 + 1) * 8) +: 8];//第一个通道第二个值
-                    value_2 = in_data_bus[((lane_idx * 4 + 2) * 8) +: 8];//第一个通道第三个值
-                    value_3 = in_data_bus[((lane_idx * 4 + 3) * 8) +: 8];//第一个通道第四个值
+                for (ch_idx = 0; ch_idx < 4; ch_idx = ch_idx + 1) begin
+                    value_0 = in_data_bus[((ch_idx * 4 + 0) * 8) +: 8];  // 第一个值
+                    value_1 = in_data_bus[((ch_idx * 4 + 1) * 8) +: 8];  // 第二个值
+                    value_2 = in_data_bus[((ch_idx * 4 + 2) * 8) +: 8];  // 第三个值
+                    value_3 = in_data_bus[((ch_idx * 4 + 3) * 8) +: 8];  // 第四个值
 
                     // 两两比较
                     max_l1_0 = (value_0 > value_1) ? value_0 : value_1;
                     max_l1_1 = (value_2 > value_3) ? value_2 : value_3;
                     max_value = (max_l1_0 > max_l1_1) ? max_l1_0 : max_l1_1;
 
-                    stage1_data_bus[(lane_idx * 8) +: 8] <= max_value;
+                    out_data_bus[(ch_idx * 8) +: 8] <= max_value;
                 end
             end else begin
-                stage1_data_bus <= 32'd0;
+                out_data_bus <= 32'd0;
             end
         end
     end
 
+    // 元数据打拍模块
     meta_pipe u_meta_pipe_stage1 (
         .clk(clk),
         .rst_n(rst_n),
@@ -91,7 +90,5 @@ module post_process_maxpool (
         .out_group(out_group),
         .out_fire(out_fire)
     );
-
-    assign out_data_bus = stage1_data_bus;
 
 endmodule

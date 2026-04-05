@@ -1,21 +1,21 @@
 `timescale 1ns / 1ps
 /*
- * 模块名称: post_process_fc_weight_sram_if
+ * 模块名称: fc_weight_sram_if
  * 作者: SonicBolt 团队
- * 日期: 2026-04-03
+ * 日期: 2026-04-05
  * 版本: v1.0
  *
  * 功能概述:
  *   - 封装 FC 权重 SRAM 的读写仲裁与实例化。
- *   - 写优先：写请求与计算读请求同拍到达时，优先写入
+ *   - 写优先: 写请求与计算读请求同拍到达时，优先写入。
  */
-module post_process_fc_weight_sram_if #(
+module fc_weight_sram_if #(
     parameter integer WEIGHT_DEPTH = 72
 ) (
     input  wire        clk,
     input  wire        rst_n,
 
-    input  wire        in_valid,
+    input  wire        in_fire,
     input  wire [3:0]  in_pos,
     input  wire [2:0]  in_group,
 
@@ -32,8 +32,9 @@ module post_process_fc_weight_sram_if #(
 
     assign token_addr = {in_pos, in_group};
 
-    // SRAM 使能并定义写优先
-    assign weight_sram_en   = weight_wr_en | in_valid;
+    // fire 信号会比下一拍 valid 更早到达，因此在这一拍启动权重预读。
+    // 当外部正在写权重时，仍保持写优先，避免读写同拍冲突。
+    assign weight_sram_en   = weight_wr_en | in_fire;
     assign weight_sram_addr = weight_wr_en ? weight_wr_addr : token_addr;
 
     sram_sp #(

@@ -1,15 +1,15 @@
 `timescale 1ns / 1ps
 /*
- * 模块名称: post_process_fc_rescale
+ * 模块名称: fc_rescale
  * 作者: SonicBolt 团队
- * 日期: 2026-04-03
+ * 日期: 2026-04-05
  * 版本: v1.0
  *
  * 功能概述:
  *   - FC 专用 rescale：对两路 INT32 执行乘 M0 与右移 SHIFT_N
  *   - 输入/输出均为两路 INT32 打包总线（64bit）
  */
-module post_process_fc_rescale #(
+module fc_rescale #(
     parameter integer M0 = 11,
     parameter integer SHIFT_N = 15
 ) (
