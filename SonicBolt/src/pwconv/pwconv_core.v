@@ -2,7 +2,7 @@
 /*
  * 模块名称: pwconv_core
  * 作者: SonicBolt 团队
- * 日期: 2026-04-03
+ * 日期: 2026-04-06
  * 版本: v1.1
  *
  * 功能概述:
@@ -151,6 +151,8 @@ module pwconv_core #(
             end
 
             if (input_fire) begin
+                // recv 表示当前 buff 接收到的 tile 个数，范围 0..72
+                // 当 recv = 8 时，表示当前 buff 刚好接收到完整的 8 个tile，当前周期必须发射地址信号，下一个周期数据和参数就绪，可以开始发射 token 进入 MAC 计算。
                 recv_count <= recv_count + 7'd1;
             end
 

@@ -151,13 +151,9 @@ module cnn_tb #(
     wire        sigmoid_out_stream_valid;
     wire [63:0] sigmoid_out_stream_data;
 
-    // CNN 输出流接口：保留原有端口形状，低 64bit 为有效结果。
+    // CNN 输出流接口
     wire         out_stream_valid;
-    wire         out_stream_last;
-    wire         out_stream_fire;
-    wire [3:0]   out_stream_pos;
-    wire [2:0]   out_stream_group;
-    wire [127:0] out_stream_data;
+    wire [63:0]  out_stream_data;
 
     // 本地测试数据缓存数组。
     reg [79:0]   input_rows_mem         [0:INPUT_ROW_COUNT-1];
@@ -285,10 +281,6 @@ module cnn_tb #(
 
         // ------------ 数据流接口 ------------
         .out_stream_valid(out_stream_valid),
-        .out_stream_fire(out_stream_fire),
-        .out_stream_last(out_stream_last),
-        .out_stream_pos(out_stream_pos),
-        .out_stream_group(out_stream_group),
         .out_stream_data(out_stream_data)
     );
 

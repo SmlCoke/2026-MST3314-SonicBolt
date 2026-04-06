@@ -90,13 +90,9 @@ module cnn #(
     input  wire [7:0]    sigmoid_lut_wr_addr,  // Sigmoid LUT 地址
     input  wire [31:0]   sigmoid_lut_wr_data,  // Sigmoid LUT 写数据
 
-    // ------------ 输出数据流接口（当前兼容旧 testbench 端口形状） ------------
-    output wire          out_stream_valid, // 输出 tile 有效
-    output wire          out_stream_fire,  // 输出的下一层启动信号
-    output wire          out_stream_last,  // 输出 tile 是否为最后一个
-    output wire [3:0]    out_stream_pos,   // 输出 tile 的 pos 编号
-    output wire [2:0]    out_stream_group, // 输出 tile 的 group 编号
-    output wire [127:0]  out_stream_data   // 输出 tile 数据
+    // ------------ 输出数据流接口 ------------
+    output wire          out_stream_valid, // 输出数据有效
+    output wire [63:0]   out_stream_data   // 输出 2 x FP32
 );
 
     // 三个卷积层与后处理层状态信号
@@ -285,11 +281,7 @@ module cnn #(
     // - 后处理真实输出只保留 valid + 64bit 数据
     // - 这里将结果放在 out_stream_data 低 64bit，其他 metadata 置 0
     assign out_stream_valid = post_process_out_stream_valid;
-    assign out_stream_fire  = 1'b0;
-    assign out_stream_last  = 1'b0;
-    assign out_stream_pos   = 4'd0;
-    assign out_stream_group = 3'd0;
-    assign out_stream_data  = {64'd0, post_process_out_stream_data};
+    assign out_stream_data  = post_process_out_stream_data;
 
     // 顶层完成信号以后处理子系统为准；busy 则反映 4 个子系统任一仍在工作。
     assign busy = conv_busy || dwconv_busy || pwconv_busy || post_process_busy;

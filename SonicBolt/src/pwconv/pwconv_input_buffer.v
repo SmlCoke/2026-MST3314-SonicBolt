@@ -2,7 +2,7 @@
 /*
  * 模块名称: pwconv_input_buffer
  * 作者: SonicBolt 团队
- * 日期: 2026-04-03
+ * 日期: 2026-04-06
  * 版本: v1.1
  *
  * 功能概述:
@@ -46,7 +46,7 @@ module pwconv_input_buffer (
                 odd_buf  <= 1024'd0;
             end
 
-            // capture_en 本质是 in_stream_valid，每一个tile有效时，要下一个时钟周期才能被buf读取
+            // capture_en 本质是 in_stream_valid，每一个tile有效时，当前buffer立即采样
             if (capture_en) begin
                 if (in_pos[0]) begin
                     odd_buf[in_group*128 +: 128] <= in_data;

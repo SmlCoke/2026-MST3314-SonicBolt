@@ -87,7 +87,7 @@ module fc_frame_accum (
             // emit_valid 只保持一拍，数据由寄存器稳定输出。
             out_valid_reg <= 1'b0;
 
-            // fire 只在帧首装载一次 bias，避免 fire 连续为高时反复覆盖累加状态。
+            // 本质就是 fire 信号，只在帧首装载一次 bias，避免 fire 连续为高时反复覆盖累加状态。
             if (frame_start) begin
                 frame_busy <= 1'b1;
                 accum_cls0 <= bias_cls0_32;
