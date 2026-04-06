@@ -1,20 +1,13 @@
-# SonicBolt CNN Accelerator System Architecture
+# SonicBolt CNN Accelerator IP - CNN-v1.0
 
-
-当前系统版本：SonicBolt v5.0
+当前项目版本：SonicBolt v5.1
 当前版本发布日期：2026-04-06
-历史版本备注：
-- v1.x: 第一层卷积 Conv 初始实现
-- v2.x: 第一层卷积 Conv 优化版本
-- v3.x: Conv + DWConv 链路实现
-- v4.x: Conv + DWConv + PWConv 链路实现
-- v5.x: 全链路实现，包含 Conv + DWConv + PWConv + Post Process
 
 ---
 
 ## I. 系统总体架构总览
 
-SonicBolt 是一个高度定制化、以流式执行为主的、面向语音检测的 CNN 硬件加速器。整个系统期望在$.18$工艺、 $100\sim120 MHZ$ 极高的帧率计算目标（如 1000k FPS 的计算指标）。
+SonicBolt 是一个高度定制化、以流式执行为主的、面向语音检测的 CNN 硬件加速器。整个系统期望在 $.18um$ 工艺、 $100\sim120 MHz$ 极高的帧率计算目标（如 1000k FPS 的计算指标）。
 
 整个顶层架构分为四个核心子系统级阶段：
 
@@ -24,28 +17,28 @@ SonicBolt 是一个高度定制化、以流式执行为主的、面向语音检�
 2. **输入尺寸**： $1 \times 30 \times 10$（通道 $\times$ 高 $\times$ 宽）。
 3. **卷积核尺寸**：32 个 $1 \times 11 \times 7$ 卷积核。
 4. **核心任务**：提取图像初级大尺度特征。其自带片上 SRAM 作为全图缓存。将原图切片发送为 **流式 Token**（以 `pos` 和 `group` 搭建二维发射坐标），向后提供 $32 \times 20 \times 4$ 特征图的 `Tile` 串、每个 `Tile` 尺寸 $4 \times 4\times 4$ 
-5. 详细设计细节参考 `./conv/` 下的 RTL 模块以及 [README文档](./conv/docs/README.md)。
+5. 详细设计细节参考 `/SonicBolt/src/conv/` 下的 RTL 模块以及 [README文档](/SonicBolt/src/conv/docs/README.md)。
 
 
 ### 1.2 DWConv 子系统
 
 1. **功能定位**：深度可分离卷积（Depthwise Convolution）。
-2. **输入尺寸**：$4 \times 4 \times 4 $ `tile`
-3. **卷积核尺寸**：$32 \times 1 \times 3 \times 3$。
+2. **输入尺寸**:  $4 \times 4 \times 4$  `tile`
+3. **卷积核尺寸**: $32 \times 1 \times 3 \times 3$ 。
 4. **核心任务**：按通道空间执行精细化特征提取。直接透传接收 Conv 的每 $4\times 2\times 2$ 空间 Token 进行 $\times 3$ 行乘与加处理，输出尺寸规约为 $32 \times 18 \times 2$，每个 `tile` 尺寸 $4 \times 2 \times 2$。
-5. 详细设计细节参考 `./dwconv/` 下的 RTL 模块以及 [README文档](./dwconv/docs/README.md)。
+5. 详细设计细节参考 `/SonicBolt/src/dwconv/` 下的 RTL 模块以及 [README文档](/SonicBolt/src/dwconv/docs/README.md)。
 
 ### 1.3 PWConv 子系统
 1. **逐点卷积（Pointwise Convolution）**。
-2. **输入尺寸**：$4 \times 2 \times 2$
-3. **卷积核尺寸**： $32 \times 32 \times 1 \times 1$。
+2. **输入尺寸**: $4 \times 2 \times 2$
+3. **卷积核尺寸**:  $32 \times 32 \times 1 \times 1$ 。
 4. **核心任务**：跨层整合特征通道。这层为了实现 $32\text{ch}$ 的全通道累和操作，巧妙地在入口处利用 **双缓冲（Ping-Pong Buffer）** 结构，暂存相同 `pos` 下的所有通道输入组并统一乘加，输出尺寸维持 $32 \times 18 \times 2$，每个 `tile` 尺寸 $4 \times 2 \times 2$。
-5. 详细设计细节参考 `./pwconv/` 下的 RTL 模块以及 [README文档](./pwconv/docs/README.md)。
+5. 详细设计细节参考 `./SonicBolt/src/pwconv/` 下的 RTL 模块以及 [README文档](/SonicBolt/src/pwconv/docs/README.md)。
 
 ### 1.4 Post Process 后处理子系统
 1. **功能定位**：最大池化、展平、全连接、Sigmoid。
 2. **核心任务**：首先将数据流进行对应的 **2x2 MaxPool** 的极大值收纳运算进而降维至 $32 \times 9 \times 1$ 即 **288 维的一维长向量**（这就是 **pos-group** 架构的核心来源，以 1 token(4 channel)/cycle 为核心指标构建的二维坐标架构）。接着通过流水线传送级 **FC** 累加层计算各个类别（Class 0, Class 1）的分数矩阵得分，最后经过内建量化与硬件 LUT 查表（**Sigmoid** 替代层）输出分类结果。
-3. 详细设计细节参考 `./post_process/` 下的 RTL 模块以及 [README文档](./post_process/docs/README.md)。
+3. 详细设计细节参考 `/SonicBolt/src/post_process/` 下的 RTL 模块以及 [README文档](/SonicBolt/src/post_process/docs/README.md)。
 
 ## II. 数据流与调度核心
 
@@ -54,11 +47,11 @@ SonicBolt 是一个高度定制化、以流式执行为主的、面向语音检�
 
 ### 2.1 调度核心: pos-group 架构
 
-MaxPool 层的输出是一个 $9\times 32$ 的二维张量，它有 $32$ 个通道，每个通道有 $9$ 个空间位置，我们把**这样的空间位置称为 `pos`**，其取值范围是 $0\sim 8$。为了实现最终 $1000k\text{FPS}$ 的性能指标，我们需要在 $100 MHZ$ 的时钟频率下，使得**流水线满载**时，平均**每 $N$ 个周期**就能输出一张图的结果，这里 $N < 100$ 。或者说平均处理一张图的有效吞吐（即**连续两张图完成计算的时间间隔**）不得超过100个时钟周期。
+MaxPool 层的输出是一个 $9\times 32$ 的二维张量，它有 $32$ 个通道，每个通道有 $9$ 个空间位置，我们把**这样的空间位置称为 `pos`**，其取值范围是 $0\sim 8$。为了实现最终 $1000k\text{FPS}$ 的性能指标，我们需要在 $100 MHz$ 的时钟频率下，使得**流水线满载**时，平均**每 $N$ 个周期**就能输出一张图的结果，这里 $N < 100$ 。或者说平均处理一张图的有效吞吐（即**连续两张图完成计算的时间间隔**）不得超过100个时钟周期。
 
 因此，我们设计了如下架构，在**流水线满载**时，每次都能处理这 $9\times 32$ 个数值中的 4 个，这样就能在**流水线满载**的情况下实现每 $288/4 = 72$ 个周期输出一张图的结果。其中的这 4 个数据，就是**同一个 pos 下的 4 个通道的数据**，我们把**这 4 个通道的组合称为一个 `group`**。因此每个 pos 下有 8 个 group（32 个通道 / 4 个通道每组 = 8 组），也就是说其取值范围是 $0\sim 7$ 。
 
-因此，我们就可以用二维坐标 $(\text{pos}, \text{group})$ 来描述每个周期输出的这 4 个通道数据的空间位置，例如 $(0, 0)$ 就是表示第 $0$ 个位置下通道 $0\sim 3$ 的数据，$(0, 1)$ 就表示第 $0$ 个位置下通道 $4\sim 7$ 的数据，以此类推。
+因此，我们就可以用二维坐标 $(\text{pos}, \text{group})$ 来描述每个周期输出的这 4 个通道数据的空间位置，例如 $(0, 0)$ 就是表示第 $0$ 个位置下通道 $0\sim 3$ 的数据， $(0, 1)$ 就表示第 $0$ 个位置下通道 $4\sim 7$ 的数据，以此类推。
 
 整个系统的调度核心就是以 `pos` 为主、`group` 为次的二维坐标架构，**所有层都严格按照这个架构进行数据的接收和发送**，从而实现了全系统的无等待、无 FIFO 缓冲的流水线计算。
 
