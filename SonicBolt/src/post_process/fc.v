@@ -69,7 +69,7 @@ module fc #(
     wire signed [31:0] lane_delta_cls0;
     wire signed [31:0] lane_delta_cls1;
 
-    wire               frame_emit_valid;
+    wire               frame_valid;
     wire signed [31:0] frame_sum_cls0;
     wire signed [31:0] frame_sum_cls1;
 
@@ -160,7 +160,7 @@ module fc #(
         .in_bias_cls1(bias_cls1),              // in: class1 bias, 16bit
 
         // ---------- 输出元数据 ----------
-        .out_emit_valid(frame_emit_valid),     // out: 发出结果的 valid 信号
+        .out_valid(frame_valid),     // out: 发出结果的 valid 信号
 
         // ---------- 输出数据 ----------
         .out_sum_cls0(frame_sum_cls0),         // out: class0 累加结果, INT32
@@ -177,18 +177,11 @@ module fc #(
     ) u_fc_rescale (
         .clk(clk),
         .rst_n(rst_n),
+        .in_valid(frame_valid),
         .in_data_bus(stage0_data_bus),
+        .out_valid(stage1_valid),
         .out_rescale_bus(stage1_rescale_bus)
     );
-
-    // rescale 本身是一拍时序逻辑，这里把 valid 打拍后再送入 saturate stage。
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            stage1_valid <= 1'b0;
-        end else begin
-            stage1_valid <= frame_emit_valid;
-        end
-    end
 
     // Stage2: 有符号饱和到 INT8（无 ReLU），做成一级时序流水
     fc_saturate u_fc_saturate (

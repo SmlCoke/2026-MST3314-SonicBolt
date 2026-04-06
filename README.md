@@ -3,7 +3,7 @@
 # ⚡️SonicBolt(声速闪电)
 **数字集成电路设计 · 高性能 CNN 加速器全流程设计**
 
-[![Version](https://img.shields.io/badge/Version-v2.0-blue.svg)]() [![Institution](https://img.shields.io/badge/Institution-SJTU-red.svg)](https://www.sjtu.edu.cn/) [![SmlCoke](https://img.shields.io/badge/SmlCoke-https://smlcoke.com-brightgreen.svg)](https://smlcoke.com) [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![Version](https://img.shields.io/badge/Version-v5.0-blue.svg)]() [![Institution](https://img.shields.io/badge/Institution-SJTU-red.svg)](https://www.sjtu.edu.cn/) [![SmlCoke](https://img.shields.io/badge/SmlCoke-https://smlcoke.com-brightgreen.svg)](https://smlcoke.com) [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 
 [项目简介](#i-项目简介) • [仓库结构](#ii-仓库结构) • [各模块说明](#iii-各模块说明) • [设计进度](#iv-设计进度)
 
@@ -149,8 +149,8 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 架构研究 | 阅读规范、建立 Python 行为模型 | ✅ 完成 |
-| RTL 设计 | Verilog 模块编写（SonicBolt） | 🔲 进行中 |
-| 逻辑仿真 | Testbench 编写与功能验证 | 🔲 进行中 |
-| 逻辑综合 | Design Compiler，时序/面积/功耗分析 | 🔲 待开始 |
+| RTL 设计 | Verilog 模块编写（SonicBolt） | ✅ 完成 |
+| 逻辑仿真 | Testbench 编写与功能验证 | ✅ 完成 |
+| 逻辑综合 | Design Compiler，时序/面积/功耗分析 | 🔲 进行中 |
 | 时序分析 | PrimeTime 时序签核 | 🔲 待开始 |
 | 物理设计 | ICC/Encounter 布局布线，后仿真 | 🔲 待开始 |

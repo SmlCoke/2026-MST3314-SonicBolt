@@ -17,7 +17,7 @@ module fc_bias_store (
     input  wire               rst_n,
 
     input  wire               bias_wr_en,
-    input  wire signed [31:0] bias_wr_data,
+    input  wire signed [31:0] bias_wr_data,    // 输入数据，低 16 位对应 class0，高 16 位对应 class1
 
     output wire signed [15:0] out_bias_cls0,
     output wire signed [15:0] out_bias_cls1

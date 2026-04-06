@@ -609,6 +609,7 @@ module cnn_tb #(
             start <= 1'b1;
             @(posedge clk);
             start <= 1'b0;
+            $display("Run started at cycle=%0d", cycle_counter);
         end
     endtask
 

@@ -2,7 +2,7 @@
 /*
  * 模块名称: fc_rescale
  * 作者: SonicBolt 团队
- * 日期: 2026-04-05
+ * 日期: 2026-04-06
  * 版本: v1.0
  *
  * 功能概述:
@@ -15,7 +15,13 @@ module fc_rescale #(
 ) (
     input  wire        clk,
     input  wire        rst_n,
+
+    // ---------- 输入数据 ----------
+    input  wire        in_valid,
     input  wire [63:0] in_data_bus,
+
+    // ---------- 输出数据 ----------
+    output reg         out_valid,
     output reg  [63:0] out_rescale_bus
 );
 
@@ -27,7 +33,11 @@ module fc_rescale #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             out_rescale_bus <= 64'd0;
+            out_valid <= 1'b0;
         end else begin
+            // 输入元数据打拍
+            out_valid <= in_valid;
+
             for (idx = 0; idx < 2; idx = idx + 1) begin
                 current_value = in_data_bus[idx*32 +: 32];
                 mult_value = current_value * M0;

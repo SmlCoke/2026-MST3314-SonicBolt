@@ -145,6 +145,7 @@ module post_process_subsystem #(
     assign flatten_out_data_int  = maxpool_out_data_int;
 
     // 全连接层
+    // 经过全连接层的内部状态积累后，五个元数据信号只保留 valid ，其他信号在 FC 内部发挥最后的定位作用
     fc #(
         .M0(FC_M0),
         .SHIFT_N(FC_SHIFT_N)
@@ -178,11 +179,17 @@ module post_process_subsystem #(
     post_process_sigmoid u_sigmoid (
         .clk(clk),
         .rst_n(rst_n),
+        
+        // ---------- 输入数据 ----------
         .in_valid(fc_out_valid_int),
         .in_data_bus(fc_out_data_int),
+
+        // ---------- LUT 写接口 ----------
         .lut_wr_en(sigmoid_lut_store_wr_en),
         .lut_wr_addr(sigmoid_lut_wr_addr),
         .lut_wr_data(sigmoid_lut_wr_data),
+
+        // ---------- 输出数据 ----------
         .out_valid(sigmoid_out_valid_int),
         .out_data_bus(sigmoid_out_data_int)
     );
