@@ -2,8 +2,8 @@
 /*
  * 模块名称: fc_mac
  * 作者: SonicBolt 团队
- * 日期: 2026-04-05
- * 版本: v1.0
+ * 日期: 2026-04-06
+ * 版本: v1.2
  *
  * 功能概述:
  *   - 计算单个 token 的 4 路 lane 乘加增量
@@ -17,6 +17,7 @@
  * 版本定位:
  *   - v1.0 完成基本功能实现
  *   - v1.1 将 v1.0 的组合逻辑模块升级为时序流水线，用寄存器打拍输出
+ *   - v1.2 优化了加法树结构，将原来的串行级联加法结构修改为平衡加法树，减少综合工具优化压力。
  */
 module fc_mac (
     input  wire               clk,
@@ -38,15 +39,85 @@ module fc_mac (
     output reg  signed [31:0] out_delta_cls1
 );
 
-    integer lane_idx;
+    // 4 路 lane 的输入激活值，按低位到高位依次取出
+    wire signed [7:0] data_lane0;
+    wire signed [7:0] data_lane1;
+    wire signed [7:0] data_lane2;
+    wire signed [7:0] data_lane3;
 
-    reg signed [7:0]  data_value;
-    reg signed [7:0]  weight_value_cls0;
-    reg signed [7:0]  weight_value_cls1;
-    reg signed [15:0] product_cls0;
-    reg signed [15:0] product_cls1;
-    reg signed [31:0] sum_cls0;
-    reg signed [31:0] sum_cls1;
+    // 两个类别各自对应的 4 路权重
+    wire signed [7:0] weight_cls0_lane0;
+    wire signed [7:0] weight_cls0_lane1;
+    wire signed [7:0] weight_cls0_lane2;
+    wire signed [7:0] weight_cls0_lane3;
+    wire signed [7:0] weight_cls1_lane0;
+    wire signed [7:0] weight_cls1_lane1;
+    wire signed [7:0] weight_cls1_lane2;
+    wire signed [7:0] weight_cls1_lane3;
+
+    // 先并行完成 4 路乘法
+    wire signed [15:0] product_cls0_lane0;
+    wire signed [15:0] product_cls0_lane1;
+    wire signed [15:0] product_cls0_lane2;
+    wire signed [15:0] product_cls0_lane3;
+    wire signed [15:0] product_cls1_lane0;
+    wire signed [15:0] product_cls1_lane1;
+    wire signed [15:0] product_cls1_lane2;
+    wire signed [15:0] product_cls1_lane3;
+
+    // 再按 2 级平衡加法树归约，避免 RTL 上形成 4 项串行级联加法器
+    wire signed [16:0] sum_l1_cls0_01;
+    wire signed [16:0] sum_l1_cls0_23;
+    wire signed [16:0] sum_l1_cls1_01;
+    wire signed [16:0] sum_l1_cls1_23;
+    wire signed [17:0] sum_l2_cls0;
+    wire signed [17:0] sum_l2_cls1;
+
+    // 最终输出仍保持 INT32，接口与时序均不变
+    wire signed [31:0] sum_cls0;
+    wire signed [31:0] sum_cls1;
+
+    assign data_lane0 = in_data_bus[7:0];
+    assign data_lane1 = in_data_bus[15:8];
+    assign data_lane2 = in_data_bus[23:16];
+    assign data_lane3 = in_data_bus[31:24];
+
+    assign weight_cls0_lane0 = in_weight_bus[7:0];
+    assign weight_cls0_lane1 = in_weight_bus[15:8];
+    assign weight_cls0_lane2 = in_weight_bus[23:16];
+    assign weight_cls0_lane3 = in_weight_bus[31:24];
+
+    assign weight_cls1_lane0 = in_weight_bus[39:32];
+    assign weight_cls1_lane1 = in_weight_bus[47:40];
+    assign weight_cls1_lane2 = in_weight_bus[55:48];
+    assign weight_cls1_lane3 = in_weight_bus[63:56];
+
+    assign product_cls0_lane0 = data_lane0 * weight_cls0_lane0;
+    assign product_cls0_lane1 = data_lane1 * weight_cls0_lane1;
+    assign product_cls0_lane2 = data_lane2 * weight_cls0_lane2;
+    assign product_cls0_lane3 = data_lane3 * weight_cls0_lane3;
+
+    assign product_cls1_lane0 = data_lane0 * weight_cls1_lane0;
+    assign product_cls1_lane1 = data_lane1 * weight_cls1_lane1;
+    assign product_cls1_lane2 = data_lane2 * weight_cls1_lane2;
+    assign product_cls1_lane3 = data_lane3 * weight_cls1_lane3;
+
+    assign sum_l1_cls0_01 = {{1{product_cls0_lane0[15]}}, product_cls0_lane0} +
+                            {{1{product_cls0_lane1[15]}}, product_cls0_lane1};
+    assign sum_l1_cls0_23 = {{1{product_cls0_lane2[15]}}, product_cls0_lane2} +
+                            {{1{product_cls0_lane3[15]}}, product_cls0_lane3};
+    assign sum_l1_cls1_01 = {{1{product_cls1_lane0[15]}}, product_cls1_lane0} +
+                            {{1{product_cls1_lane1[15]}}, product_cls1_lane1};
+    assign sum_l1_cls1_23 = {{1{product_cls1_lane2[15]}}, product_cls1_lane2} +
+                            {{1{product_cls1_lane3[15]}}, product_cls1_lane3};
+
+    assign sum_l2_cls0 = {{1{sum_l1_cls0_01[16]}}, sum_l1_cls0_01} +
+                         {{1{sum_l1_cls0_23[16]}}, sum_l1_cls0_23};
+    assign sum_l2_cls1 = {{1{sum_l1_cls1_01[16]}}, sum_l1_cls1_01} +
+                         {{1{sum_l1_cls1_23[16]}}, sum_l1_cls1_23};
+
+    assign sum_cls0 = {{14{sum_l2_cls0[17]}}, sum_l2_cls0};
+    assign sum_cls1 = {{14{sum_l2_cls1[17]}}, sum_l2_cls1};
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -62,21 +133,6 @@ module fc_mac (
             out_fire  <= in_fire;
 
             if (in_valid) begin
-                sum_cls0 = 32'sd0;
-                sum_cls1 = 32'sd0;
-
-                for (lane_idx = 0; lane_idx < 4; lane_idx = lane_idx + 1) begin
-                    data_value        = in_data_bus[(lane_idx * 8) +: 8];
-                    weight_value_cls0 = in_weight_bus[(lane_idx * 8) +: 8];
-                    weight_value_cls1 = in_weight_bus[32 + (lane_idx * 8) +: 8];
-
-                    product_cls0 = data_value * weight_value_cls0;
-                    product_cls1 = data_value * weight_value_cls1;
-
-                    sum_cls0 = sum_cls0 + {{16{product_cls0[15]}}, product_cls0};
-                    sum_cls1 = sum_cls1 + {{16{product_cls1[15]}}, product_cls1};
-                end
-
                 out_delta_cls0 <= sum_cls0;
                 out_delta_cls1 <= sum_cls1;
             end else begin
