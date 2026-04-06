@@ -51,6 +51,11 @@ CONV_MAIN_V_PATH = "SonicBolt/src/conv/conv_subsystem.v"
 DWCONV_README_PATH = "SonicBolt/src/dwconv/docs/README.md"
 DWCONV_MAIN_V_PATH = "SonicBolt/src/dwconv/dwconv_subsystem.v"
 
+PWCONV_README_PATH = "SonicBolt/src/pwconv/docs/README.md"
+PWCONV_MAIN_V_PATH = "SonicBolt/src/pwconv/pwconv_subsystem.v"
+
+Post_README_PATH = "SonicBolt/src/post_process/docs/README.md"
+Post_MAIN_V_PATH = "SonicBolt/src/post_process/post_process_subsystem.v"
 def get_line(file_path, line_number):
     """获取指定文件的特定行（行号从1开始）"""
     if not os.path.exists(file_path):
@@ -82,11 +87,23 @@ def check_version_consistency():
     dwconv_readme_line = get_line(DWCONV_README_PATH, 3)
     dwconv_main_line = get_line(DWCONV_MAIN_V_PATH, 6)
 
+    pwconv_readme_line = get_line(PWCONV_README_PATH, 3)
+    pwconv_main_line = get_line(PWCONV_MAIN_V_PATH, 6)
+
+    post_readme_line = get_line(Post_README_PATH, 3)
+    post_main_line = get_line(Post_MAIN_V_PATH, 6)
+
     conv_readme_version = extract_version(conv_readme_line, CONV_README_PATH, 3)
     conv_main_version = extract_version(conv_main_line, CONV_MAIN_V_PATH, 6)
 
     dwconv_readme_version = extract_version(dwconv_readme_line, DWCONV_README_PATH, 3)
     dwconv_main_version = extract_version(dwconv_main_line, DWCONV_MAIN_V_PATH, 6)
+
+    pwconv_readme_version = extract_version(pwconv_readme_line, PWCONV_README_PATH, 3)
+    pwconv_main_version = extract_version(pwconv_main_line, PWCONV_MAIN_V_PATH, 6)
+
+    post_readme_version = extract_version(post_readme_line, Post_README_PATH, 3)
+    post_main_version = extract_version(post_main_line, Post_MAIN_V_PATH, 6)
 
     if conv_readme_version != conv_main_version:
         print("\n🚫 Commit 被拒绝！版本号不匹配！")
@@ -101,6 +118,21 @@ def check_version_consistency():
         print(f"📄 {DWCONV_MAIN_V_PATH} 第 6 行版本: '{dwconv_main_version}'")
         print("💡 请修改对齐后再重新执行 git commit。")
         sys.exit(1)
+
+    if pwconv_readme_version != pwconv_main_version:
+        print("\n🚫 Commit 被拒绝！版本号不匹配！")
+        print(f"📄 {PWCONV_README_PATH} 第 3 行版本: '{pwconv_readme_version}'")
+        print(f"📄 {PWCONV_MAIN_V_PATH} 第 6 行版本: '{pwconv_main_version}'")
+        print("💡 请修改对齐后再重新执行 git commit。")
+        sys.exit(1)
+
+    if post_readme_version != post_main_version:
+        print("\n🚫 Commit 被拒绝！版本号不匹配！")
+        print(f"📄 {Post_README_PATH} 第 3 行版本: '{post_readme_version}'")
+        print(f"📄 {Post_MAIN_V_PATH} 第 6 行版本: '{post_main_version}'")
+        print("💡 请修改对齐后再重新执行 git commit。")
+        sys.exit(1)
+
     print("✅ 版本号校验通过。")
 
 # ========== 新增：检查 staged 的 .v 文件日期 ==========

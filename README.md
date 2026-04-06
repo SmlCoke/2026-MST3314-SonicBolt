@@ -132,7 +132,7 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 
 ---
 
-### 3.5 `SonicBolt/` — Verilog RTL 实现（待完善）
+### 3.5 `SonicBolt/` — Verilog RTL 实现（已实现第一版）
 
 本团队针对**高性能场景**设计的 Verilog 实现，目标：
 
@@ -141,6 +141,9 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 - 设计方向：提升 MAC 并行度 + 流水线深度
 
 架构示意图可以参照 [figures.pptx](./SonicBolt/docs/figures.pptx) ，其中涵盖了各个版本的电路架构示意图以及时序分析图，供设计参考。
+
+当前已经实现完整功能版本：
+- CNN-v1.0: SonicBolt v5.1，全链路基础实现，包含所有功能，并且通过功能仿真验证
 
 ---
 
