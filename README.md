@@ -73,7 +73,12 @@ CNN-Accelerator/
     └── src/
         ├── conv/               # Conv 层 RTL 实现
         ├── dwconv/             # DWConv 层 RTL 实现
+        ├── pwconv/             # PWConv 层 RTL 实现
+        ├── post_process/       # 后处理层 RTL 实现
         ├── utils/              # 公共模块（SRAM 封装、流水打拍、量化激活等）
+        ├── cnn.v               # 顶层模块，连接各子系统
+        ├── cnn_tb.v            # 测试平台，包含 Testbench 和
+        └── run_cnn_tb.py       # 仿真入口脚本，运行 Verilog 编译+仿真并验证结果
 ```
 
 
