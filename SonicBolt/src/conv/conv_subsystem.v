@@ -2,7 +2,7 @@
 /*
  * 模块名称: conv_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-03-30
+ * 日期: 2026-04-07
  * 版本: v2.5
  *
  * 功能概述: 基于 pos-major 数据流的 Conv 子系统顶层
@@ -28,6 +28,7 @@
  *     "马上开始准备参数, 下一个周期就要开始计算了"
  *   - v2.3 有 bug，fire/last 信号并没有实际作为输出端口，v2.4已修复
  *   - v2.5 中，将模块下所有公共子模块提取到 utils/ 目录下
+ *   - v2.6 增加了用于适配输入双帧Ping-Pong缓存的接口信号
  */
 module conv_subsystem #(
     parameter integer M0      = 111,
@@ -43,6 +44,7 @@ module conv_subsystem #(
     input  wire          img_wr_en,        // 输入图像写使能
     input  wire [4:0]    img_wr_addr,      // 输入图像行地址，30 行因此使用 5bit
     input  wire [79:0]   img_wr_row_data,  // 输入图像写数据，一行 10 个像素，10 x 8bit = 80bit
+    input  wire          img_wr_commit,    // 写入提交信号，写满一张图的30行后的下一个周期拉高，由外部控制
 
     // ------------ 权重 SRAM 写控制信号 ------------
     input  wire          weight_wr_en,     // Conv 权重写使能
@@ -112,7 +114,7 @@ module conv_subsystem #(
         // ---------- pos 窗口请求 / 返回接口 ----------
         .pos_req_valid(pos_req_valid),       // in: 下游请求一个新的 pos 窗口
         .pos_req_pos(pos_req_pos),           // in: 请求的 pos 编号，范围 0~8，因此使用 4bit
-        .consume_tick(consume_tick),
+        .consume_tick(consume_tick),         // out: “当前 token 已被真正消费”，用来驱动输入缓存预取下一 pos 的两行新数据
         .pos_window_valid(pos_window_valid), // out: 输入窗口有效
         .pos_window_data(pos_window_data)  // out: 返回的 14x10 工作集
     );
@@ -165,7 +167,7 @@ module conv_subsystem #(
         // ---------- 输入输入窗口握手接口 ----------
         .pos_req_valid(pos_req_valid),        // out: 向输入缓存请求一个新的 pos 窗口
         .pos_req_pos(pos_req_pos),            // out: 请求的 pos 编号，范围 0~8，因此使用 4bit
-        .consume_tick(consume_tick),
+        .consume_tick(consume_tick),          // out: conv_core 告诉输入缓存“当前 token 已被真正消费”，用来驱动输入缓存预取下一 pos 的两行新数据
         .pos_window_valid(pos_window_valid),  // in: 输入窗口有效
         .pos_window_data(pos_window_data),  // in: 返回的 14x10 窗口，14 x 10 x 8bit = 1120bit
 

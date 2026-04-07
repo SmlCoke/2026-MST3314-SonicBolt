@@ -38,47 +38,50 @@ Input(1,30,10) → Conv(32,1,11,7) → ReLU
 CNN-Accelerator/
 │
 ├── Demo/
-│   ├── demo1-codex             # 第一版 Conv 层实现，由 Codex 5.3 生成，供参考学习
-│   ├── demo2-claude            # 第二版 Conv 层实现，由 Claude Opus 4.6 生成，供参考学习 
-│   ├── demo2-claude-opus       # 第三版 Conv 层实现，由 Claude Opus 4.6 生成，修复了第二版的 Bug 
-│   └── pre-test/               # 预览测试模块，与真实 RTL 实现基本无关，用于测试
+│   ├── demo1-codex               # 第一版 Conv 层实现，由 Codex 5.3 生成，供参考学习
+│   ├── demo2-claude              # 第二版 Conv 层实现，由 Claude Opus 4.6 生成，供参考学习 
+│   ├── demo2-claude-opus         # 第三版 Conv 层实现，由 Claude Opus 4.6 生成，修复了第二版的 Bug 
+│   └── pre-test/                 # 预览测试模块，与真实 RTL 实现基本无关，用于测试
 │
-├── Materials/                  # 课程资料
-│   ├── introduction.md         # 课程简介与评分标准
-│   ├── Design_Specifications.md# 电路设计规范（网络结构、层参数、重量化公式）
-│   ├── PyCode-Specifications.md# Python 行为模型编写规范
-│   └── Skill-Plan.md           # 技能树与推进计划（参考）
+├── Materials/                    # 课程资料
+│   ├── introduction.md           # 课程简介与评分标准
+│   ├── Design_Specifications.md  # 电路设计规范（网络结构、层参数、重量化公式）
+│   ├── PyCode-Specifications.md  # Python 行为模型编写规范
+│   ├── Coding-Styles.md          # Verilog 编码规范
+│   ├── Re-quantization.md        # 量化细节与 M0/n 参数计算方法
+│   ├── Skill-Plan.md             # 技能树与推进计划（参考）
+│   └── SRAM_Requirements.md      # 片上 SRAM 需求表格
 │
-├── Notes/                      # 学习笔记
-│   ├── demo                    # 示例 verilog 模块，与 slices/下的相关笔记一同阅读
-│   ├── guide/                  # AI 给出的学习/涉及指导
-│   └── slices/                 # 学习到的零散知识点 
+├── Notes/                        # 学习笔记
+│   ├── demo                      # 示例 verilog 模块，与 slices/下的相关笔记一同阅读
+│   ├── guide/                    # AI 给出的学习/涉及指导
+│   └── slices/                   # 学习到的零散知识点 
 │
-├── PyRTL-CNN/                  # ★ Python 行为级仿真模型（本团队编写）
-│   ├── load_params.py          # 参数加载模块
-│   ├── rtl_primitives.py       # 底层硬件原语（SRAM / LineBuffer / MAC / Requant）
-│   ├── layers.py               # 各网络层类
-│   ├── top_module.py           # 顶层推理模块
-│   ├── run_inference.py        # 推理入口脚本
-│   ├── test_golden.py          # 金标准对比验证
-│   └── README.md               # 详细说明与学习指南
+├── PyRTL-CNN/                    # ★ Python 行为级仿真模型（本团队编写）
+│   ├── load_params.py            # 参数加载模块
+│   ├── rtl_primitives.py         # 底层硬件原语（SRAM / LineBuffer / MAC / Requant）
+│   ├── layers.py                 # 各网络层类
+│   ├── top_module.py             # 顶层推理模块
+│   ├── run_inference.py          # 推理入口脚本
+│   ├── test_golden.py            # 金标准对比验证
+│   └── README.md                 # 详细说明与学习指南
 │
-├── Scripts/                    # 辅助脚本（如参数转换、仿真自动化等）
-│   ├── interception.py         # git commit 时的审查与拦截脚本
-│   └── search_files_by_name    # 根据文件名片段搜索文件
+├── Scripts/                      # 辅助脚本（如参数转换、仿真自动化等）
+│   ├── interception.py           # git commit 时的审查与拦截脚本
+│   └── search_files_by_name      # 根据文件名片段搜索文件
 │
-└── SonicBolt/                  # ★ RTL 实现（本团队编写）
-    ├── data/                   # 测试数据和网络参数，供仿真使用
-    ├── docs/                   # 设计文档、模块说明、架构示意图等 
+└── SonicBolt/                    # ★ RTL 实现（本团队编写）
+    ├── data/                     # 测试数据和网络参数，供仿真使用
+    ├── docs/                     # 设计文档、模块说明、架构示意图等 
     └── src/
-        ├── conv/               # Conv 层 RTL 实现
-        ├── dwconv/             # DWConv 层 RTL 实现
-        ├── pwconv/             # PWConv 层 RTL 实现
-        ├── post_process/       # 后处理层 RTL 实现
-        ├── utils/              # 公共模块（SRAM 封装、流水打拍、量化激活等）
-        ├── cnn.v               # 顶层模块，连接各子系统
-        ├── cnn_tb.v            # 测试平台，包含 Testbench 和
-        └── run_cnn_tb.py       # 仿真入口脚本，运行 Verilog 编译+仿真并验证结果
+        ├── conv/                 # Conv 层 RTL 实现
+        ├── dwconv/               # DWConv 层 RTL 实现
+        ├── pwconv/               # PWConv 层 RTL 实现
+        ├── post_process/         # 后处理层 RTL 实现
+        ├── utils/                # 公共模块（SRAM 封装、流水打拍、量化激活等）
+        ├── cnn.v                 # 顶层模块，连接各子系统
+        ├── cnn_tb.v              # 测试平台，包含 Testbench 和
+        └── run_cnn_tb.py         # 仿真入口脚本，运行 Verilog 编译+仿真并验证结果
 ```
 
 

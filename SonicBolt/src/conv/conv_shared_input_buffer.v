@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_shared_input_buffer
  * 作者: SonicBolt 团队
- * 日期: 2026-04-02
- * 版本: v2.2
+ * 日期: 2026-04-07
+ * 版本: v2.3
  *
  * 功能概述:
  *   Conv1 输入前端，使用单口 SRAM 保存整帧输入图，并用 14 行工作集缓存当前 pos。
@@ -30,6 +30,7 @@
  *   - 相比 v2.0 取消了双 Bank 和 双 Cache 缓存设计
  *   - 只保留了一个 Bank 和一个 Cache，这是建立在目前 1 token/cycle 的高新能前提上的。
  *   - v2.2 引入了 Memory Compiler 生成的 SRAM 模块，重构了读写控制逻辑。
+ *   - v2.3 增加了输入双帧 Ping-Pong 缓存机制
  */
 module conv_shared_input_buffer (
     input  wire          clk,              // 时钟
@@ -38,10 +39,14 @@ module conv_shared_input_buffer (
     // ---------- 输入图写入接口 ----------
     input  wire          img_wr_en,        // 输入图逐行写使能，高电平表示当前拍写入一行
     input  wire [4:0]    img_wr_addr,      // 写入行地址，输入图共 30 行，因此 5bit 足够表示 0~29
-    input  wire [79:0]   img_wr_row_word,   // 一行 10 个像素，10 x 8bit = 80bit
+    input  wire [79:0]   img_wr_row_word,  // 一行 10 个像素，10 x 8bit = 80bit
+    input  wire          img_wr_commit,    // 表示当前写入 Bank 的30行已经写完，可以被消费
+    output wire          img_wr_ready      // 输出给外部，表示当前存在可写 bank    
 
     // ---------- 消费启动接口 ----------
     input  wire          start_consume,    // 启动消费当前 SRAM 中的一张新图，并清空上一轮工作集状态
+    input  wire          consume_bank_sel, // 本次 start_consume 要切换到哪个 bank
+    output reg  [1:0]    ready_bank_mask,  // 输出给 conv_subsystem, 指示哪几个 bank 已经 ready，可以开始启动消费
 
     // ---------- pos 窗口请求 / 返回接口 ----------
     input  wire          pos_req_valid,    // 下游请求一个新的 pos 窗口
@@ -54,9 +59,13 @@ module conv_shared_input_buffer (
     localparam integer ROW_WORD_W   = 80;
     localparam integer WORKSET_ROWS = 14;
 
+    reg         write_bank;        // 控制当前写入的 bank，0 = ping, 1 = pong
+    reg         active_bank;       // 当前处于消费状态的工作 bank
+
     // shadow_cache 只镜像输入图前 14 行。
     // 1. start 之后请求 pos=0 时，不需要先从 SRAM 连续读 14 拍才能开算。
-    reg  [79:0] shadow_cache [0:13];
+    reg  [79:0] shadow_cache_ping [0:13];
+    reg  [79:0] shadow_cache_pong [0:13];
 
     // 当前工作集从 pos=p 切到 pos=p+1 时，只需要补入两行新数据：
     //   行号 = 2*p+14 和 2*p+15
@@ -72,24 +81,42 @@ module conv_shared_input_buffer (
     reg         frame_rd_en_reg;    // 发给单口 SRAM 的同步读使能
     reg  [4:0]  frame_rd_addr_reg;  // 发给单口 SRAM 的同步读地址
 
-    wire [79:0] frame_rdata;        // 单口 SRAM 的同步读返回
-    wire        frame_en;           // 单口 SRAM 总使能，写输入或发起预取时拉高
-    wire [4:0]  frame_addr;         // 单口 SRAM 地址，写入和预取共用同一个地址口
+    wire [79:0] frame_rdata_ping;   // Ping SRAM 的同步读返回
+    wire [79:0] frame_rdata_pong;   // Pong SRAM 的同步读返回
+    wire [79:0] frame_rdata;        // 当前处于消费状态的 SRAM 的读总线
+    wire        frame_en_ping;      // Ping SRAM 总使能，写输入或发起预取时拉高
+    wire        frame_en_pong;      // Pong SRAM 总使能，写输入或发起预取时拉高
+    wire [4:0]  frame_addr;         // SRAM 地址，写入和预取共用同一个地址口
 
     integer idx;
 
-    assign frame_en        = img_wr_en || frame_rd_en_reg;
     assign frame_addr      = img_wr_en ? img_wr_addr : frame_rd_addr_reg;
 
+    // Ping-Pong SRAM 的使能信号：(1) 写, 且写入本 bank (2) 读, 其读出本 bank
+    assign frame_en_ping   = (img_wr_en && ~write_bank) || (frame_rd_en_reg && ~active_bank);
+    assign frame_en_pong   = (img_wr_en &&  write_bank) || (frame_rd_en_reg &&  active_bank);
+
+    // 根据当前活动的 Bank 筛选读出总线
+    assign frame_rdata     = (active_bank == 1'b0) ? frame_rdata_ping : frame_rdata_pong;
+
     // 单口输入 SRAM。
-    // 当前版本不再保留双 bank ping-pong，而是采用“先整帧写入，再启动计算”的使用方式。
-    S018V3EBCDSP_X8Y4D80_PR u_frame_store (
+    // Ping-Pong 缓存机制
+    S018V3EBCDSP_X8Y4D80_PR u_frame_store_ping (
         .CLK(clk),
-        .CEN(~frame_en),
+        .CEN(~frame_en_ping),
         .WEN(~img_wr_en),
         .A(frame_addr),
         .D(img_wr_row_word),
-        .Q(frame_rdata)
+        .Q(frame_rdata_ping)
+    );
+
+    S018V3EBCDSP_X8Y4D80_PR u_frame_store_pong (
+        .CLK(clk),
+        .CEN(~frame_en_pong),
+        .WEN(~img_wr_en),
+        .A(frame_addr),
+        .D(img_wr_row_word),
+        .Q(frame_rdata_pong)
     );
 
     always @(posedge clk or negedge rst_n) begin
@@ -111,11 +138,23 @@ module conv_shared_input_buffer (
             end
             prefetched_rows[0] <= 80'd0;
             prefetched_rows[1] <= 80'd0;
+
+            // 复位后活动bank和写bank默认指向 ping
+            write_bank         <= 1'b0;
+            active_bank         <= 1'b0;
         end else begin
             // 默认每拍把 SRAM 读使能拉低；
             // 只有进入预取发起分支时，才会把 active_rd_en_reg 拉高一个周期。
             frame_rd_en_reg <= 1'b0;
 
+            // -----------------------------------------------------------------
+            // Ping-Pong 状态更新逻辑
+
+            // -----------------------------------------------------------------
+            if (img_wr_commit) begin
+                write_bank <= ~write_bank;
+                ready_bank_mask[write_bank] = 1'b1;
+            end
             // -----------------------------------------------------------------
             // 写入路径：
             // 外部总是按“整行”写 SRAM。
@@ -123,7 +162,12 @@ module conv_shared_input_buffer (
             // 让未来的 pos=0 能直接从寄存器快照中拿到首个工作集。
             // -----------------------------------------------------------------
             if (img_wr_en && (img_wr_addr < 5'd14)) begin
-                shadow_cache[img_wr_addr] <= img_wr_row_word;
+                if (write_bank == 1'b0) begin
+                    shadow_cache_ping[img_wr_addr] <= img_wr_row_word;
+                end else begin 
+                    shadow_cache_pong[img_wr_addr] <= img_wr_row_word;
+                end
+                    
             end
 
             // -----------------------------------------------------------------
@@ -154,8 +198,10 @@ module conv_shared_input_buffer (
             if (pos_req_valid) begin
                 if (!workset_loaded && (pos_req_pos == 4'd0)) begin
                     // 首次建工作集：直接从对应 bank 的 shadow cache 中一次性装 14 行。
+                    // 根据状态 active_bank 选择哪个bank
                     for (idx = 0; idx < WORKSET_ROWS; idx = idx + 1) begin
-                        pos_window_data[idx*ROW_WORD_W +: ROW_WORD_W] <= shadow_cache[idx];
+                        pos_window_data[idx*ROW_WORD_W +: ROW_WORD_W] <= 
+                        (active_bank == 1'b0) ? shadow_cache_ping[idx] :  shadow_cache_pong[idx];
                     end
                     current_pos      <= 4'd0;
                     workset_loaded   <= 1'b1;
