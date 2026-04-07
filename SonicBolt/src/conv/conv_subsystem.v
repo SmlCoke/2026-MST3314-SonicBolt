@@ -3,7 +3,7 @@
  * 模块名称: conv_subsystem
  * 作者: SonicBolt 团队
  * 日期: 2026-04-07
- * 版本: v2.5
+ * 版本: v2.6
  *
  * 功能概述: 基于 pos-major 数据流的 Conv 子系统顶层
  *
