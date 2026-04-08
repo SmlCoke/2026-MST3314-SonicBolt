@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_core
  * 作者: SonicBolt 团队
- * 日期: 2026-03-30
- * 版本: v2.2
+ * 日期: 2026-04-08
+ * 版本: v2.3
  *
  * 功能概述:
  *   Conv 调度与主计算核心。
@@ -37,6 +37,7 @@
  *   - v2.1 相比 v2.0 增加了第二层启动信号 out_stream_fire，当该信号为高时，告诉第二层 SRAM: 
  *     "马上开始准备参数, 下一个周期就要开始计算了"
  *   - v2.2 将所有公共子模块提取到 utils/ 目录下
+ *   - v2.3 将杂糅状态更新逻辑重塑为三段式有限状态机
  */
 module conv_core #(
     parameter integer M0      = 111,
@@ -71,6 +72,12 @@ module conv_core #(
     output wire          out_stream_fire,          // 输出元数据：夏优启动信号
     output wire [511:0]  out_stream_data           // 输出数据：量化后的 tile 数据
 );
+    // 状态机状态列表
+    parameter IDLE  = 2'b00;
+    parameter START = 2'b01;
+    parameter BUSY  = 2'b10;
+    parameter DONE  = 2'b11;
+    reg [1:0] current_state, next_state;
 
     // 9 个 pos x 8 个 group = 72 个 token
     localparam integer TOKEN_COUNT = 72;
@@ -134,11 +141,43 @@ module conv_core #(
     assign bias_rd_en      = issue_fire;
     assign bias_rd_group   = issue_group;
 
+    // 三段式状态机第一段: 状态更新逻辑
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            current_state <= IDLE;
+        end else begin
+            current_state <= next_state;
+        end
+    end
 
-    // 主状态机：
-    // 1. start 拉高后进入 busy
-    // 2. 每次 issue_fire 推进一个 token
-    // 3. 当量化输出的最后一个 token 出来时拉高 done，并退出 busy
+    // 三段式状态机第二段: 下一个状态计算逻辑
+    always @(*) begin
+        next_state = 2'bx; // debug 所用的默认值
+        case (current_state)
+            IDLE: begin
+                if (start) begin
+                    next_state = START;
+                end else begin
+                    next_state = IDLE;
+                end
+            end
+            START: begin
+                next_state = BUSY; // 启动后直接进入 BUSY 状态
+            end
+            BUSY: begin
+                if (quant_valid && quant_last) begin
+                    next_state = DONE; // 当最后一个 token 的量化结果出来时进入 DONE 状态
+                end else begin
+                    next_state = BUSY; // 否则继续保持 BUSY 状态
+                end
+            end
+            DONE: begin
+                next_state = IDLE; // 完成后回到 IDLE 状态，等待下一次启动
+            end
+            default: next_state = IDLE;
+        endcase
+    end
+    // 三段式状态机第三段: 状态输出 + 数据通路寄存器更新逻辑。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             busy         <= 1'b0;
@@ -151,38 +190,56 @@ module conv_core #(
             stage0_pos   <= 4'd0;
             stage0_group <= 3'd0;
         end else begin
-            done <= 1'b0;
-
-            if (start && !busy) begin
-                busy         <= 1'b1;
-                issue_pos    <= 4'd0;
-                issue_group  <= 3'd0;
-                issue_count  <= 7'd0;
-                stage0_valid <= 1'b0;
-                stage0_last  <= 1'b0;
-                stage0_pos   <= 4'd0;
-                stage0_group <= 3'd0;
-            end else if (quant_valid && quant_last) begin
-                busy <= 1'b0;
-                done <= 1'b1;
-            end
-
-            // stage0_* 在当前拍锁存本拍真正发出去的 token 元数据。
-            stage0_valid <= issue_fire;
-            stage0_last  <= issue_fire && (issue_count == TOKEN_COUNT - 1);
-            stage0_pos   <= issue_pos;
-            stage0_group <= issue_group;
-
-            if (issue_fire) begin
-                issue_count <= next_issue_count;
-                // group 先走完 0..7，再把 pos 加 1。
-                if (issue_group == 3'd7) begin
-                    issue_group <= 3'd0;
-                    issue_pos   <= issue_pos + 4'd1;
-                end else begin
-                    issue_group <= issue_group + 3'd1;
+            case (current_state)
+                IDLE: begin
+                    busy <= 1'b0;
+                    if (start) begin
+                        busy         <= 1'b1;
+                        issue_pos    <= 4'd0;
+                        issue_group  <= 3'd0;
+                        issue_count  <= 7'd0;
+                        stage0_valid <= 1'b0;
+                        stage0_last  <= 1'b0;
+                        stage0_pos   <= 4'd0;
+                        stage0_group <= 3'd0;
+                    end
                 end
-            end
+
+                START,
+                BUSY: begin
+                    busy         <= 1'b1;
+                    // stage0_* 在当前拍锁存本拍真正发出去的 token 元数据。
+                    stage0_valid <= issue_fire;
+                    stage0_last  <= issue_fire && (issue_count == TOKEN_COUNT - 1);
+                    stage0_pos   <= issue_pos;
+                    stage0_group <= issue_group;
+
+                    if (issue_fire) begin
+                        issue_count <= next_issue_count;
+                        // group 先走完 0..7，再把 pos 加 1。
+                        if (issue_group == 3'd7) begin
+                            issue_group <= 3'd0;
+                            issue_pos   <= issue_pos + 4'd1;
+                        end else begin
+                            issue_group <= issue_group + 3'd1;
+                        end
+                    end
+
+                    // 最后一个量化 token 出来时立即 done 脉冲并退出 busy。
+                    if ((current_state == BUSY) && quant_valid && quant_last) begin
+                        busy <= 1'b0;
+                        done <= 1'b1;
+                    end
+                end
+
+                DONE: begin
+                    busy <= 1'b0;
+                end
+
+                default: begin
+                    busy <= 1'b0;
+                end
+            endcase
         end
     end
 

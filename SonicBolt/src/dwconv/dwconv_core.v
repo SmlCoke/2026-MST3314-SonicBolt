@@ -2,8 +2,8 @@
 /*
  * 模块名称: dwconv_core
  * 作者: SonicBolt 团队
- * 日期: 2026-04-02
- * 版本: v1.1
+ * 日期: 2026-04-08
+ * 版本: v1.2
  *
  * 功能概述:
  *   DWConv 调度与主计算核心。
@@ -27,6 +27,7 @@
  *
  * 版本定位:
  *   - v1.1 修补bug: 补齐 fire 信号
+ *   - v1.2 将杂糅状态更新逻辑重塑为三段式有限状态机
  */
 module dwconv_core #(
     parameter integer M0      = 59,
@@ -62,6 +63,13 @@ module dwconv_core #(
     output wire [127:0]  out_stream_data           // 输出数据：量化后的 tile 数据
 );
 
+    // 状态机状态列表
+    parameter IDLE  = 2'b00;
+    parameter BUSY  = 2'b01;
+    parameter DONE  = 2'b10;
+    reg  [1:0] current_state;
+    reg  [1:0] next_state;
+
     // 记录下一个待计算的 tile 编号
     reg  [3:0] issue_pos;
     reg  [2:0] issue_group;
@@ -89,40 +97,102 @@ module dwconv_core #(
     assign weight_rd_group = issue_group;
     assign bias_rd_group = issue_group;
 
-    // 主状态机：
+    // 三段式状态机第一段：状态更新逻辑
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            current_state <= IDLE;
+        end else begin
+            current_state <= next_state;
+        end
+    end
+
+    // 三段式状态机第二段：下一个状态计算逻辑
+    always @(*) begin
+        next_state = current_state; // 默认保持当前状态
+        case (current_state)
+            IDLE: begin
+                if (in_stream_fire) begin
+                    next_state = BUSY;
+                end else begin
+                    next_state = IDLE;
+                end
+            end
+
+            BUSY: begin
+                if (quant_valid && quant_last) begin
+                    next_state = DONE;
+                end else begin
+                    next_state = BUSY;
+                end
+                 
+            end
+
+            DONE: begin
+                next_state = IDLE;
+            end
+        endcase
+
+    end
+
+    // 三段式状态机设计第三段：输出逻辑
     // 1. in_stream_fire 拉高后进入 busy (第一个输入token到来时)
     // 2. 每次 in_stream_valid 推进一个 token
     // 3. 当量化输出的最后一个 token 出来时拉高 done，并退出 busy
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            // 参数 SRAM 地址信号初始为0，默认指向 group = 0
             issue_group <= 3'b0;
             issue_pos <= 4'b0;
             busy <= 1'b0;
             done <= 1'b0;
         end else begin
+            // done 只在完成拍拉高一个周期。
             done <= 1'b0;
 
-            // 当第一个输入token到来前一个上升沿(in_stream_fire拉高)，进入busy状态
-            if (in_stream_fire && !busy) begin
-                busy <= 1'b1;
-                issue_group <= 3'b0;
-                issue_pos <= 4'b0;
-            end else if (quant_valid && quant_last) begin
-                // 当量化输出的最后一个token出来时，退出busy并拉高done
-                busy <= 1'b0;
-                done <= 1'b1;
-            end
-
-            // 输入 valid 到来时更新 tile 编号组
-            if (in_stream_fire) begin
-                if (issue_group == 3'd7) begin
-                    issue_group <= 3'd0;
-                    issue_pos   <= issue_pos + 4'd1;
-                end else begin
-                    issue_group <= issue_group + 3'd1;
+            case (current_state)
+                IDLE: begin
+                    busy <= 1'b0;
+                    // 当第一个输入token到来前一个上升沿(in_stream_fire拉高)，进入busy状态
+                    if (in_stream_fire) begin
+                        busy <= 1'b1;
+                        // 注意，当前时钟上升沿:
+                        // (1) in_stream_valid信号刚变为高，但是采样仍为旧值 
+                        // (2) 上一个周期 SRAM 使能信号置高， 此时SRAM 读 addr = 0 的权重以及偏置
+                        // (3) 第一个 tile 的数据也马上有效
+                        // (4) 下一个时钟上升沿，tile_mac 会采样 weight 以及 data 的旧值，同时 SRAM 采样当前 issue_group 的值，这个值理应对应 addr = 1 的数据
+                        // (5) 所以在当前周期内，issue_group 必须置高
+                        issue_group <= 3'd1;
+                        issue_pos <= 4'b0;
+                    end
                 end
-            end
+
+                BUSY: begin
+                    // 当量化输出的最后一个token出来时，退出busy并拉高done
+                    if (quant_valid && quant_last) begin
+                        busy <= 1'b0;
+                        done <= 1'b1;
+                    end else begin 
+                        busy <= 1'b1;
+                    end
+
+                    // 输入 valid 到来时更新 tile 编号组
+                    if (in_stream_fire) begin
+                        if (issue_group == 3'd7) begin
+                            issue_group <= 3'd0;
+                            issue_pos   <= issue_pos + 4'd1;
+                        end else begin
+                            issue_group <= issue_group + 3'd1;
+                        end
+                    end
+                end 
+
+                DONE: begin
+                    busy <= 1'b0;
+                end
+
+                default: begin
+                    busy <= 1'b0;
+                end
+            endcase
         end
     end
 

@@ -3,7 +3,7 @@
  * 模块名称: conv_shared_input_buffer
  * 作者: SonicBolt 团队
  * 日期: 2026-04-08
- * 版本: v2.3
+ * 版本: v2.4
  *
  * 功能概述:
  *   Conv1 输入前端，使用单口 SRAM 保存整帧输入图，并用 14 行工作集缓存当前 pos。
@@ -31,6 +31,7 @@
  *   - 只保留了一个 Bank 和一个 Cache，这是建立在目前 1 token/cycle 的高新能前提上的。
  *   - v2.2 引入了 Memory Compiler 生成的 SRAM 模块，重构了读写控制逻辑。
  *   - v2.3 增加了输入双帧 Ping-Pong 缓存机制
+ *   - v2.4 将杂糅状态更新逻辑重塑为三段式有限状态机
  */
 module conv_shared_input_buffer (
     input  wire          clk,              // 时钟
@@ -72,15 +73,23 @@ module conv_shared_input_buffer (
     //   行号 = 2*p+14 和 2*p+15
     reg  [79:0] prefetched_rows [0:1];
 
-    reg  [3:0]  current_pos;        // 当前 pos_window_data 这份 14 行工作集对应哪个 pos     
-    reg         workset_loaded;     // 当前工作集是否已经有效装载        
-    reg         prefetched_valid;   // 两条预取行是否都已准备好          
-    reg  [1:0]  prefetch_step;      // 两条预取请求的微状态       
-    reg         rd_wait_pending;    // SRAM 已经发出读请求，正在等待同步读返回         
-    reg         rd_capture_pending; // 当前拍应该把 frame_rdata 捕获到 prefetched_rows           
-    reg         rd_capture_slot;    // 本次捕获写到 prefetched_rows[0] 还是 [1]         
+    reg  [3:0]  current_pos;        // 当前 pos_window_data 这份 14 行工作集对应哪个 pos
+    reg         workset_loaded;     // 当前工作集是否已经有效装载
+    reg         prefetched_valid;   // 两条预取行是否都已准备好
     reg         frame_rd_en_reg;    // 发给单口 SRAM 的同步读使能
     reg  [4:0]  frame_rd_addr_reg;  // 发给单口 SRAM 的同步读地址
+
+    // 预取控制状态机（仅负责两条新增行的发起与捕获时序）。
+    localparam [2:0] PREFETCH_IDLE      = 3'd0;   // 等待发起预取请求
+    localparam [2:0] PREFETCH_WAIT_R0   = 3'd1;   // 已发起第一条预取请求，等待同步读返回窗口
+    localparam [2:0] PREFETCH_CAP_R0    = 3'd2;   // 捕获第一条预取返回数据
+    localparam [2:0] PREFETCH_WAIT_REQ1 = 3'd3;   // 第一条预取已完成，等待下一个 consume_tick 发第二条预取请求
+    localparam [2:0] PREFETCH_WAIT_R1   = 3'd4;   // 已发起第二条预取请求，等待同步读返回窗口
+    localparam [2:0] PREFETCH_CAP_R1    = 3'd5;   // 捕获第二条预取返回数据
+    localparam [2:0] PREFETCH_READY     = 3'd6;   // 预取完成，可以开始消费
+
+    reg [2:0] current_state;
+    reg [2:0] next_state;
 
     wire [79:0] frame_rdata_ping;   // Ping SRAM 的同步读返回
     wire [79:0] frame_rdata_pong;   // Pong SRAM 的同步读返回
@@ -102,9 +111,15 @@ module conv_shared_input_buffer (
     wire        start_write_session;// 一张新图写入会话的起点
     wire        write_data_fire;    // 这一拍的输入写数据是否真的应该被 buffer 接收并写入 SRAM
 
-    integer idx;
+    wire        load_pos0_req;      // 首次工作集请求（pos=0）
+    wire        roll_pos_req;       // 工作集滚动请求（current_pos+1 且预取已完成）
+    wire        issue_prefetch_req; // 当前拍允许发起预取请求
+
+    integer idx_shadow;
+    integer idx_window;
 
     // 允许写入的两个情况：
+    // （首先要注意一个大前提：允许我们写的，只可能是 non-active bank，而且不是说 non-active bank 任何时候都可以写）
     // (1) 当前已经处于一张图的连续写入会话中
     // (2) 当前不在写入流中，且 non-active bank 还没有装好一张“待消费”的完整输入图
     assign img_wr_ready         = write_inflight || !ready_bank_mask[~active_bank];
@@ -122,6 +137,11 @@ module conv_shared_input_buffer (
     // (2) 要么这一拍就是一张新图写入的起点
     // 该信号是写使能信号的本质，可以避免外部乱写
     assign write_data_fire      = img_wr_en && (write_inflight || start_write_session);
+
+    assign load_pos0_req      = pos_req_valid && !workset_loaded && (pos_req_pos == 4'd0);
+    assign roll_pos_req       = pos_req_valid && workset_loaded &&
+                                (pos_req_pos == (current_pos + 4'd1)) && prefetched_valid;
+    assign issue_prefetch_req = consume_tick && workset_loaded && (current_pos < 4'd8);
 
     // SRAM 写使能信号: 应该写并且选中当前 bank
     assign frame_wr_en_ping = write_data_fire && ~selected_write_bank;
@@ -164,67 +184,82 @@ module conv_shared_input_buffer (
         .Q(frame_rdata_pong)
     );
 
+    // 三段式状态机第一段：状态更新逻辑
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            // 复位后不假定任何工作集有效，必须等 start_consume 和 pos=0 请求重新建立状态。
-            pos_window_valid   <= 1'b0;
-            current_pos        <= 4'd0;
-            workset_loaded     <= 1'b0;
-            prefetched_valid   <= 1'b0;
-            prefetch_step      <= 2'd0;
-            rd_wait_pending    <= 1'b0;
-            rd_capture_pending <= 1'b0;
-            rd_capture_slot    <= 1'b0;
-            frame_rd_en_reg    <= 1'b0;
-            frame_rd_addr_reg  <= 5'd0;
-            ready_bank_mask    <= 2'b00;
-            for (idx = 0; idx < WORKSET_ROWS; idx = idx + 1) begin
-                shadow_cache_ping[idx] <= 80'd0;
-                shadow_cache_pong[idx] <= 80'd0;
-                pos_window_data[idx*ROW_WORD_W +: ROW_WORD_W] <= 80'd0;
-            end
-            prefetched_rows[0] <= 80'd0;
-            prefetched_rows[1] <= 80'd0;
+            current_state <= PREFETCH_IDLE;
+        end else if (start_consume) begin
+            current_state <= PREFETCH_IDLE;
+        end else begin
+            current_state <= next_state;
+        end
+    end
 
+    // 三段式状态机第二段：下一个状态计算逻辑
+    always @(*) begin
+        // 这一行必须存在，否则某些分支中当前没有给next_state赋值会引发错误
+        next_state = current_state;
+        case (current_state)
+            PREFETCH_IDLE: begin
+                // 只有当前 pos 已经装载完成，并且 MAC 发出 consume_tick 表示消费了当前 pos，才允许发起预取请求
+                if (issue_prefetch_req) begin
+                    next_state = PREFETCH_WAIT_R0;
+                end
+            end
+            PREFETCH_WAIT_R0: begin
+                next_state = PREFETCH_CAP_R0;
+            end
+            PREFETCH_CAP_R0: begin
+                next_state = PREFETCH_WAIT_REQ1;
+            end
+            // 第一条预取完成后，必须等到下一个 consume_tick 来临时才能发起第二条预取请求。
+            PREFETCH_WAIT_REQ1: begin
+                if (issue_prefetch_req) begin
+                    next_state = PREFETCH_WAIT_R1;
+                end
+            end
+            PREFETCH_WAIT_R1: begin
+                next_state = PREFETCH_CAP_R1;
+            end
+            PREFETCH_CAP_R1: begin
+                next_state = PREFETCH_READY;
+            end
+            PREFETCH_READY: begin
+                // 预取完成后，继续待在 PREFETCH_READY 状态，直到下游请求 pos 滚动到 current_pos+1，此时工作集需要滚动更新
+                if (roll_pos_req) begin
+                    next_state = PREFETCH_IDLE;
+                end
+            end
+            default: begin
+                next_state = PREFETCH_IDLE;
+            end
+        endcase
+    end
+
+    // -----------------------------------------------------------------
+    // Ping-Pong 状态更新逻辑
+    // (1) 进入新图写入会话时，write_inflight 置高，锁定后续写入必须继续写同一 bank
+    // (2)一张图写完并且写入流信号有效(防止外部乱发信号)时, 把当前 write_bank 标记为“待消费 ready”，同时更新 write_bank 并且关闭写入流信号
+    // -----------------------------------------------------------------
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            ready_bank_mask <= 2'b00;
             // 复位后将 active_bank 置为 pong，
             // 这样第一张新图开始写入时会默认落到 ping bank
-            write_bank         <= 1'b0;
-            active_bank        <= 1'b1;
-            write_inflight     <= 1'b0;
+            write_bank      <= 1'b0;
+            active_bank     <= 1'b1;
+            write_inflight  <= 1'b0;
         end else begin
-            // 默认每拍把 SRAM 读使能拉低；
-            // 只有进入预取发起分支时，才会把 active_rd_en_reg 拉高一个周期。
-            frame_rd_en_reg <= 1'b0;
-
-            // -----------------------------------------------------------------
-            // Ping-Pong 状态更新逻辑
             // (1) 进入新图写入会话时，write_inflight 置高，锁定后续写入必须继续写同一 bank
-            // (2)一张图写完并且写入流信号有效(防止外部乱发信号)时, 把当前 write_bank 标记为“待消费 ready”，同时更新 write_bank 并且关闭写入流信号
-            // -----------------------------------------------------------------
             if (start_write_session && !write_inflight) begin
-                // Latch the target write bank when a new frame write session starts.
-                // This guarantees all rows (0..29) of the frame stay in the same bank.
+                // 只有在 non-active bank 还没准备好被消费时才允许写，start_write_seesion 才能为高
                 write_inflight <= 1'b1;
                 write_bank     <= ~active_bank;
-            end
-
-            if (img_wr_commit && write_inflight) begin
+            // (2)一张图写完并且写入流信号有效(防止外部乱发信号)时, 把当前 write_bank 标记为“待消费 ready”，同时更新 write_bank 并且关闭写入流信号
+            // 这里用 else if，否则 write_inflight 可能在同一拍被置高又被置低，导致状态混乱
+            end else if (img_wr_commit && write_inflight) begin
                 ready_bank_mask[write_bank] <= 1'b1;
                 write_inflight <= 1'b0;
-            end
-
-            // -----------------------------------------------------------------
-            // 写入路径：
-            // 外部总是按“整行”写 SRAM。
-            // 另外，如果写入的是前 14 行，就顺便更新 shadow cache，
-            // 让未来的 pos=0 能直接从寄存器快照中拿到首个工作集。
-            // -----------------------------------------------------------------
-            if (write_data_fire && (img_wr_addr < 5'd14)) begin
-                if (selected_write_bank == 1'b0) begin
-                    shadow_cache_ping[img_wr_addr] <= img_wr_row_word;
-                end else begin 
-                    shadow_cache_pong[img_wr_addr] <= img_wr_row_word;
-                end
             end
 
             // -----------------------------------------------------------------
@@ -232,22 +267,55 @@ module conv_shared_input_buffer (
             // -----------------------------------------------------------------
             // 注意这里不会立刻去装 14 行工作集，而是等待 core 通过 pos_req_valid
             // 明确请求 pos=0。这样输入 buffer 仍然保持“被请求才提供数据”的接口语义。
+            // 这里用的是 else if，因为 start_consume 信号绝不可能与 img_wr_commit 同时有效，这是因为 start_consume 是前一张图写完（img_wr_commit=1）后的一个瞬间置高的，下一个周期进入这个分支，后面那张图根本不可能写完！
             // -----------------------------------------------------------------
-            if (start_consume) begin
+            else if (start_consume) begin
                 // 当前 active bank 完全取决于顶层系统的选择
-                active_bank        <= consume_bank_sel;
+                active_bank <= consume_bank_sel;
                 // 当前 bank 已被选中进入消费流，不再属于“待启动消费”的 ready bank
                 ready_bank_mask[consume_bank_sel] <= 1'b0;
-                pos_window_valid   <= 1'b0;
-                current_pos        <= 4'd0;
-                workset_loaded     <= 1'b0;
-                prefetched_valid   <= 1'b0;
-                prefetch_step      <= 2'd0;
-                rd_wait_pending    <= 1'b0;
-                rd_capture_pending <= 1'b0;
-                rd_capture_slot    <= 1'b0;
             end
+        end
+    end
 
+    // ---------------------------------------------------------------------------
+    // 写入路径：
+    // 外部总是按“整行”写 SRAM。
+    // 另外，如果写入的是前 14 行，就顺便更新 shadow cache，
+    // 让未来的 pos=0 能直接从寄存器快照中拿到首个工作集。
+    // 该 reg 只会在初始十四行发挥作用，后续真正输送给 core 的数据来源于预取行以及工作集寄存器
+    // ---------------------------------------------------------------------------
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            for (idx_shadow = 0; idx_shadow < WORKSET_ROWS; idx_shadow = idx_shadow + 1) begin
+                shadow_cache_ping[idx_shadow] <= 80'd0;
+                shadow_cache_pong[idx_shadow] <= 80'd0;
+            end
+            // write_data_fire 为写使能信号的本质
+        end else if (write_data_fire && (img_wr_addr < 5'd14)) begin
+            if (selected_write_bank == 1'b0) begin
+                shadow_cache_ping[img_wr_addr] <= img_wr_row_word;
+            end else begin
+                shadow_cache_pong[img_wr_addr] <= img_wr_row_word;
+            end
+        end
+    end
+
+    // 工作集数据通路寄存器更新逻辑
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            // 复位后不假定任何工作集有效，必须等 start_consume 和 pos=0 请求重新建立状态。
+            pos_window_valid <= 1'b0;
+            current_pos      <= 4'd0;
+            workset_loaded   <= 1'b0;
+            for (idx_window = 0; idx_window < WORKSET_ROWS; idx_window = idx_window + 1) begin
+                pos_window_data[idx_window*ROW_WORD_W +: ROW_WORD_W] <= 80'd0;
+            end
+        end else if (start_consume) begin
+            pos_window_valid <= 1'b0;
+            current_pos      <= 4'd0;
+            workset_loaded   <= 1'b0;
+        end else begin
             // -----------------------------------------------------------------
             // pos 请求处理
             // -----------------------------------------------------------------
@@ -256,95 +324,103 @@ module conv_shared_input_buffer (
             // 2. 请求 current_pos+1：把工作集上移 2 行，并接上两条预取行
             // 任何其它请求都视为调度异常，当前实现中仅忽略该请求，不更新工作集。
             // -----------------------------------------------------------------
-            if (pos_req_valid) begin
-                if (!workset_loaded && (pos_req_pos == 4'd0)) begin
-                    // 首次建工作集：直接从对应 bank 的 shadow cache 中一次性装 14 行。
-                    // 根据状态 active_bank 选择哪个bank
-                    for (idx = 0; idx < WORKSET_ROWS; idx = idx + 1) begin
-                        pos_window_data[idx*ROW_WORD_W +: ROW_WORD_W] <= 
-                        (active_bank == 1'b0) ? shadow_cache_ping[idx] :  shadow_cache_pong[idx];
-                    end
-                    current_pos      <= 4'd0;
-                    workset_loaded   <= 1'b1;
-                    pos_window_valid <= 1'b1;
-                    prefetched_valid <= 1'b0;
-                    prefetch_step    <= 2'd0;
-                end else if (workset_loaded &&
-                             (pos_req_pos == (current_pos + 4'd1)) &&
-                             prefetched_valid) begin
-                    // 工作集滚动：
-                    // 老的 [2:13] 移到新的 [0:11]
-                    // 预取好的两条新行放到 [12:13]
-                    for (idx = 0; idx < 12; idx = idx + 1) begin
-                        pos_window_data[idx*80 +: 80] <= pos_window_data[(idx + 2)*80 +: 80];
-                    end
-                    pos_window_data[12*80 +: 80] <= prefetched_rows[0];
-                    pos_window_data[13*80 +: 80] <= prefetched_rows[1];
-                    current_pos      <= pos_req_pos;
-                    prefetched_valid <= 1'b0;
-                    prefetch_step    <= 2'd0;
+            if (load_pos0_req) begin
+                // 首次建工作集：直接从对应 bank 的 shadow cache 中一次性装 14 行。
+                // 根据状态 active_bank 选择哪个bank
+                for (idx_window = 0; idx_window < WORKSET_ROWS; idx_window = idx_window + 1) begin
+                    pos_window_data[idx_window*ROW_WORD_W +: ROW_WORD_W] <=
+                        (active_bank == 1'b0) ? shadow_cache_ping[idx_window] : shadow_cache_pong[idx_window];
                 end
+                current_pos      <= 4'd0;
+                workset_loaded   <= 1'b1;
+                pos_window_valid <= 1'b1;
+            end else if (roll_pos_req) begin
+                // 工作集滚动：
+                // 老的 [2:13] 移到新的 [0:11]
+                // 预取好的两条新行放到 [12:13]
+                for (idx_window = 0; idx_window < 12; idx_window = idx_window + 1) begin
+                    pos_window_data[idx_window*80 +: 80] <= pos_window_data[(idx_window + 2)*80 +: 80];
+                end
+                pos_window_data[12*80 +: 80] <= prefetched_rows[0];
+                pos_window_data[13*80 +: 80] <= prefetched_rows[1];
+                current_pos <= pos_req_pos;
             end
+        end
+    end
 
-            // -----------------------------------------------------------------
-            // 预取发起逻辑
-            // -----------------------------------------------------------------
-            // consume_tick 表示 MAC 这一拍真正消费了当前工作集。
-            // 只要当前工作集已经有效，且还没到最后一个 pos，就在后台逐步发起两次单行读：
-            //
-            // current_pos = p 时，需要为 pos=p+1 预取
-            //   row = 2*p+14  -> prefetched_rows[0]
-            //   row = 2*p+15  -> prefetched_rows[1]
-            //
-            // prefetch_step 的含义：
-            //   0 : 还没发第一条
-            //   1 : 第一条已发，准备发第二条
-            //   2 : 第二条已发，等待 capture 完成
-            //   3 : 两条都齐了，等待 pos 切换消费
-            // -----------------------------------------------------------------
-            if (consume_tick && workset_loaded && (current_pos < 4'd8)) begin
-                case (prefetch_step)
-                    2'd0: if (!rd_wait_pending && !rd_capture_pending) begin
-                        frame_rd_en_reg   <= 1'b1;
-                        frame_rd_addr_reg <= ({1'b0, current_pos} << 1) + 5'd14;
-                        rd_wait_pending   <= 1'b1;
-                        rd_capture_slot   <= 1'b0;
-                        prefetch_step     <= 2'd1;
+    // 三段式状态机第三段：状态输出 + 数据通路寄存器更新逻辑
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            prefetched_valid  <= 1'b0;
+            frame_rd_en_reg   <= 1'b0;
+            frame_rd_addr_reg <= 5'd0;
+            prefetched_rows[0] <= 80'd0;
+            prefetched_rows[1] <= 80'd0;
+        end else begin
+            // 默认每拍把 SRAM 读使能拉低；
+            // 只有进入预取发起分支时，才会把 active_rd_en_reg 拉高一个周期。
+            frame_rd_en_reg <= 1'b0;
+
+            if (start_consume) begin
+                prefetched_valid  <= 1'b0;
+                frame_rd_addr_reg <= 5'd0;
+            end else begin
+                if (load_pos0_req || roll_pos_req) begin
+                    prefetched_valid <= 1'b0;
+                end
+
+                // -----------------------------------------------------------------
+                // 预取发起逻辑
+                // -----------------------------------------------------------------
+                // consume_tick 表示 MAC 这一拍真正消费了当前工作集。
+                // 只要当前工作集已经有效，且还没到最后一个 pos，就在后台逐步发起两次单行读：
+                //
+                // current_pos = p 时，需要为 pos=p+1 预取
+                //   row = 2*p+14  -> prefetched_rows[0]
+                //   row = 2*p+15  -> prefetched_rows[1]
+                //
+                // prefetch_state 的含义：
+                //   PREFETCH_IDLE      : 还没发第一条
+                //   PREFETCH_WAIT_R0   : 第一条地址已发，等待同步读返回窗口
+                //   PREFETCH_CAP_R0    : 捕获第一条返回数据
+                //   PREFETCH_WAIT_REQ1 : 第一条已完成，等待下一个 consume_tick 发第二条
+                //   PREFETCH_WAIT_R1   : 第二条地址已发，等待同步读返回窗口
+                //   PREFETCH_CAP_R1    : 捕获第二条返回数据
+                //   PREFETCH_READY     : 两条都齐了，等待 pos 切换消费
+                // -----------------------------------------------------------------
+                // -----------------------------------------------------------------
+                // 同步 SRAM 预取返回时序
+                // -----------------------------------------------------------------
+                // sram_sp 是同步读：
+                // - 第 1 拍：拉高 active_rd_en_reg，送出地址
+                // - 第 2 拍：rdata 更新，此时把返回值捕获到 prefetched_rows
+                // -----------------------------------------------------------------
+                case (current_state)
+                    PREFETCH_IDLE: begin
+                        if (issue_prefetch_req) begin
+                            frame_rd_en_reg   <= 1'b1;
+                            frame_rd_addr_reg <= ({1'b0, current_pos} << 1) + 5'd14;
+                        end
                     end
-                    2'd1: if (!rd_wait_pending && !rd_capture_pending) begin
-                        frame_rd_en_reg   <= 1'b1;
-                        frame_rd_addr_reg <= ({1'b0, current_pos} << 1) + 5'd15;
-                        rd_wait_pending   <= 1'b1;
-                        rd_capture_slot   <= 1'b1;
-                        prefetch_step     <= 2'd2;
+                    PREFETCH_WAIT_REQ1: begin
+                        if (issue_prefetch_req) begin
+                            frame_rd_en_reg   <= 1'b1;
+                            frame_rd_addr_reg <= ({1'b0, current_pos} << 1) + 5'd15;
+                        end
                     end
-                    default: ;
+                    PREFETCH_CAP_R0: begin
+                        prefetched_rows[0] <= frame_rdata;
+                    end
+                    PREFETCH_CAP_R1: begin
+                        prefetched_rows[1] <= frame_rdata;
+                        // 约定 slot=0 放“下一窗口的倒数第二行新增行”
+                        //     slot=1 放“下一窗口的最后一行新增行”
+                        // 当 slot=1 也完成时，说明两行都已经预取完毕，可以允许 pos 切换。
+                        prefetched_valid <= 1'b1;
+                    end
+                    default: begin
+                    end
                 endcase
-            end
-
-            // -----------------------------------------------------------------
-            // 同步 SRAM 预取返回时序
-            // -----------------------------------------------------------------
-            // sram_sp 是同步读：
-            // - 第 1 拍：拉高 active_rd_en_reg，送出地址
-            // - 第 2 拍：rdata 更新，此时把返回值捕获到 prefetched_rows
-            //
-            // rd_wait_pending 表示“上一拍刚发出读请求，当前拍等返回”
-            // rd_capture_pending 表示“当前拍要真正把 active_rdata 收进寄存器”
-            // -----------------------------------------------------------------
-            if (rd_wait_pending) begin
-                rd_wait_pending    <= 1'b0;
-                rd_capture_pending <= 1'b1;
-            end else if (rd_capture_pending) begin
-                prefetched_rows[rd_capture_slot] <= frame_rdata;
-                rd_capture_pending <= 1'b0;
-                // 约定 slot=0 放“下一窗口的倒数第二行新增行”
-                //     slot=1 放“下一窗口的最后一行新增行”
-                // 当 slot=1 也完成时，说明两行都已经预取完毕，可以允许 pos 切换。
-                if (rd_capture_slot) begin
-                    prefetched_valid <= 1'b1;
-                    prefetch_step    <= 2'd3;
-                end
             end
         end
     end

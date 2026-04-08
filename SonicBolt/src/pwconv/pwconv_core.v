@@ -64,6 +64,13 @@ module pwconv_core #(
     output wire          out_stream_fire,          // 输出元数据：下一层启动信号     
     output wire [127:0]  out_stream_data           // 输出数据：量化后的 tile 数据    
 );
+    // 状态机状态列表
+    parameter IDLE  = 2'b00;
+    parameter BUSY  = 2'b01;
+    parameter DONE  = 2'b10;
+    reg  [1:0] current_state;
+    reg  [1:0] next_state;
+
 
     // 接收侧: 一共会收 9 x 8 = 72 个输入 token
     reg  [6:0] recv_count;
@@ -110,7 +117,7 @@ module pwconv_core #(
     // 每一个tile有效时，要下一个时钟周期才能被buf读取，因此rec_count变为8的那个时钟周期，第8个tile刚好被buf读取
     // 此时 SRAM 读信号有效，下一个周期数据有效，参数有效，发送进入第一级流水
     assign issue_fire       = busy && (issue_pos < loaded_pos_count);
-    // issue_fire 高电平每次只会维持8个时钟周期，之后的下一个上升沿 issue_pos = loaded_pos_count
+    // issue_fire 高电平每次置高后，接下来会有 8 个时钟周期进行 recv 
     // 在这 8 个时钟周期内，issue_group 从0计数到7，发射完一个 pos 的 8 个 group 后，issue_pos 加1，但是此时 loaded_pos_count 也加1，仍然满足 issue_pos < loaded_pos_count 的条件，可以继续发射下一个 pos 的 token
 
     // 计算阶段每拍读取一个输出 group 对应的权重与偏置。
@@ -122,6 +129,45 @@ module pwconv_core #(
     // 根据 pos 直接取完整 tile（8 个输入 group 全量参与计算）。
     assign current_tile_data = stage0_pos[0] ? odd_pos_data : even_pos_data;
 
+
+    // 三段式状态机第一段：状态更新逻辑
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            current_state <= IDLE;
+        end else begin
+            current_state <= next_state;
+        end
+    end
+
+    // 三段式状态机第二段：下一个状态计算逻辑
+    always @(*) begin
+        next_state = current_state; // 默认保持当前状态
+        case (current_state)
+            IDLE: begin
+                if (in_stream_fire) begin
+                    next_state = BUSY;
+                end else begin
+                    next_state = IDLE;
+                end
+            end
+
+            BUSY: begin
+                if (quant_valid && quant_last) begin
+                    next_state = DONE;
+                end else begin
+                    next_state = BUSY;
+                end
+                 
+            end
+
+            DONE: begin
+                next_state = IDLE;
+            end
+        endcase
+
+    end
+
+    // 三段式状态机设计第三段：输出逻辑
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             busy         <= 1'b0;
@@ -134,46 +180,66 @@ module pwconv_core #(
             stage0_pos   <= 4'd0;
             stage0_group <= 3'd0;
         end else begin
+            // done 只在完成拍拉高一个周期。
             done <= 1'b0;
 
-            // 当第一个输入token到来前一个上升沿(in_stream_fire拉高)，进入busy状态
-            if (in_stream_fire && !busy) begin
-                busy         <= 1'b1;
-                recv_count   <= 7'd0;
-                issue_pos    <= 4'd0;
-                issue_group  <= 3'd0;
-                stage0_valid <= 1'b0;
-                stage0_last  <= 1'b0;
-                stage0_pos   <= 4'd0;
-                stage0_group <= 3'd0;
-            end else if (quant_valid && quant_last) begin
-                // 最后一个输出 tile 量化完成后，整层结束
-                busy <= 1'b0;
-                done <= 1'b1;
-            end
-
-            if (input_fire) begin
-                // recv 表示当前 buff 接收到的 tile 个数，范围 0..72
-                // 当 recv = 8 时，表示当前 buff 刚好接收到完整的 8 个tile，当前周期必须发射地址信号，下一个周期数据和参数就绪，可以开始发射 token 进入 MAC 计算。
-                recv_count <= recv_count + 7'd1;
-            end
-
-            // stage0 把本拍调度成功的 token 元数据送进 MAC
-            stage0_valid <= issue_fire;
-            stage0_last  <= issue_fire && (issue_pos == 4'd8) && (issue_group == 3'd7);
-            stage0_pos   <= issue_pos;
-            stage0_group <= issue_group;
-
-            if (issue_fire) begin
-                // 同一个 pos 需要连续 8 拍发射 out_group0..out_group7。
-                if (issue_group == 3'd7) begin
-                    issue_group <= 3'd0;
-                    issue_pos   <= issue_pos + 4'd1;
-                end else begin
-                    issue_group <= issue_group + 3'd1;
+            case (current_state)
+                IDLE: begin
+                    busy <= 1'b0;
+                    // 当第一个输入token到来前一个上升沿(in_stream_fire拉高)，进入busy状态
+                    if (in_stream_fire) begin
+                        busy <= 1'b1;
+                        recv_count   <= 7'd0;
+                        issue_pos    <= 4'd0;
+                        issue_group  <= 3'd0;
+                        stage0_valid <= 1'b0;
+                        stage0_last  <= 1'b0;
+                        stage0_pos   <= 4'd0;
+                        stage0_group <= 3'd0;
+                    end
                 end
-            end
+
+                BUSY: begin
+                    if (quant_valid && quant_last) begin
+                        // 最后一个输出 tile 量化完成后，整层结束
+                        busy <= 1'b0;
+                        done <= 1'b1;
+                    end
+
+                    if (input_fire) begin
+                        // recv 表示当前 buff 接收到的 tile 个数，范围 0..72
+                        // 当 recv = 8 时，表示当前 buff 刚好接收到完整的 8 个tile，当前周期必须发射地址信号，下一个周期数据和参数就绪，可以开始发射 token 进入 MAC 计算。
+                        recv_count <= recv_count + 7'd1;
+                    end
+
+                    // stage0 把本拍调度成功的 token 元数据送进 MAC
+                    stage0_valid <= issue_fire;
+                    stage0_last  <= issue_fire && (issue_pos == 4'd8) && (issue_group == 3'd7);
+                    stage0_pos   <= issue_pos;
+                    stage0_group <= issue_group;
+
+                    if (issue_fire) begin
+                        // 同一个 pos 需要连续 8 拍发射 out_group0..out_group7。
+                        if (issue_group == 3'd7) begin
+                            issue_group <= 3'd0;
+                            issue_pos   <= issue_pos + 4'd1;
+                        end else begin
+                            issue_group <= issue_group + 3'd1;
+                        end
+                    end
+                end
+                
+                DONE: begin
+                    busy <= 1'b0;
+                end
+
+                default: begin
+                    busy <= 1'b0;
+                end
+
+            endcase
         end
+
     end
 
     pwconv_tile_mac u_pwconv_tile_mac (
