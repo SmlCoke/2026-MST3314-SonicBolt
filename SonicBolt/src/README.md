@@ -1,7 +1,7 @@
 # SonicBolt CNN Accelerator IP - CNN-v1.0
 
-当前项目版本：SonicBolt v5.1
-当前版本发布日期：2026-04-06
+当前项目版本：SonicBolt v5.2
+当前版本发布日期：2026-04-08
 
 ---
 
