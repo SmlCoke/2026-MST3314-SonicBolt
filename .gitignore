@@ -39,6 +39,7 @@ MiniCNN/src
 # 预处理数据
 prepared_conv_test/
 prepared_test/
+prepared_sim/
 
 # 编译出的 SRAM 原始文件
 SRAM/

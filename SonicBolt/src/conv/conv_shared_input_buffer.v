@@ -202,13 +202,15 @@ module conv_shared_input_buffer (
             // (2)一张图写完并且写入流信号有效(防止外部乱发信号)时, 把当前 write_bank 标记为“待消费 ready”，同时更新 write_bank 并且关闭写入流信号
             // -----------------------------------------------------------------
             if (start_write_session && !write_inflight) begin
+                // Latch the target write bank when a new frame write session starts.
+                // This guarantees all rows (0..29) of the frame stay in the same bank.
                 write_inflight <= 1'b1;
+                write_bank     <= ~active_bank;
             end
 
             if (img_wr_commit && write_inflight) begin
                 ready_bank_mask[write_bank] <= 1'b1;
                 write_inflight <= 1'b0;
-                write_bank <= ~write_bank;
             end
 
             // -----------------------------------------------------------------
