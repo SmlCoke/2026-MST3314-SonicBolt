@@ -2,8 +2,8 @@
 /*
  * 模块名称: pwconv_core
  * 作者: SonicBolt 团队
- * 日期: 2026-04-06
- * 版本: v1.1
+ * 日期: 2026-04-08
+ * 版本: v1.2
  *
  * 功能概述:
  *   PWConv 的输入接收、token 调度、参数读取和计算核心拼接。
@@ -26,7 +26,8 @@
  *   - 接收侧负责“仓库里有没有货”，发射侧负责“现在要不要发货”
  * 
  * 版本定位:
-    *   - v1.1 修复 fire 信号
+ *   - v1.1 修复 fire 信号
+ *   - v1.2 增加 launch_safe 输出信号，暴露给顶层用于启动下一轮 conv 计算
  */
 module pwconv_core #(
     parameter integer M0      = 69,
@@ -36,6 +37,7 @@ module pwconv_core #(
     input  wire          rst_n,
     output reg           busy,
     output reg           done,
+    output wire          launch_safe,
 
     // ---------- 输入数据流接口 ----------
     input  wire          in_stream_valid,          // 输入 tile 有效
@@ -232,5 +234,9 @@ module pwconv_core #(
     assign out_stream_group = quant_group;
     assign out_stream_data  = quant_data;
     assign out_stream_fire  = quant_fire;
+
+    // 当最后一个 issue token 已经发射完成后，PWConv 对输入 buffer 和参数读口的占用就结束了；
+    // 此时即使量化尾巴还在排空，上游也可以开始准备下一帧，只要下一帧真正到达本层时当前 busy 已经拉低即可。
+    assign launch_safe = !busy || (issue_pos == 4'd9);
 
 endmodule

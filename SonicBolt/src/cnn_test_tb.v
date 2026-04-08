@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 /*
- * 模块名称: cnn_tb
+ * 模块名称: cnn_test_tb
  * 作者: SonicBolt 团队
  * 日期: 2026-04-08
  * 版本: v1.3
@@ -26,7 +26,7 @@
  *   - v1.3 优化了输入Ping-Pong缓冲和启动机制
  */
 
-module cnn_tb #(
+module cnn_test_tb #(
     parameter integer ENABLE_WAVE = 0
 ) ();
 
@@ -804,7 +804,7 @@ module cnn_tb #(
 
         if (runtime_wave_enable != 0) begin
             $dumpfile(wave_file_path);
-            $dumpvars(0, cnn_tb);
+            $dumpvars(0, cnn_test_tb);
         end
 
         load_memories();

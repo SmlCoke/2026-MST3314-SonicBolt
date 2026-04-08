@@ -13,7 +13,7 @@
  *   - 顶层已经接入 Conv 输入双帧 Ping-Pong 缓存握手。
  *   - 外部通过 `img_wr_commit` 提交一整帧输入，通过 `img_wr_ready` 判断何时可以继续写下一帧。
  *   - 为避免下一帧在级联传播过程中把 DWConv / PWConv 的首个 `fire` 冲丢，
- *     顶层使用 `run_enable` / `relaunch_pending` 只在 Conv、DWConv 与 PWConv 都可接受新帧时重新拉起下一帧。
+ *     顶层使用 `run_enable` / `relaunch_pending` 只在 Conv、DWConv 可接新帧且 PWConv 已进入安全尾段时重新拉起下一帧。
  */
 
 module cnn #(
@@ -129,13 +129,14 @@ module cnn #(
     wire [63:0]  post_process_out_stream_data;
     wire         conv_start_req;            // 真正送给 Conv 的启动脉冲
     wire         conv_launch_ready;         // 当前允许 Conv 拉起下一帧
+    wire         pwconv_launch_safe;        // PWConv 已经进入可提前发起下一帧的安全区间
 
     reg          run_enable;                // start 后进入连续推理模式
-    reg          relaunch_pending;          // 当前已有待发车帧，等待 Conv / DWConv / PWConv 都准备好
+    reg          relaunch_pending;          // 当前已有待发车帧，等待 Conv / DWConv 准备好且 PWConv 进入安全区间
 
-    // 只要 Conv 本身空闲，且 DWConv / PWConv 都已经能安全接收本帧后续传播出来的 fire，
-    // 就允许把待发车帧正式送入 Conv；这样比等待整条 CNN 空闲更早。
-    assign conv_launch_ready = !conv_busy && !dwconv_busy && !pwconv_busy;
+    // 只要 Conv 本身空闲，且 DWConv 已能接收下一次 fire，同时 PWConv 已经进入安全尾段，
+    // 就允许把待发车帧正式送入 Conv；这样比等待 PWConv 完全 done 更早。
+    assign conv_launch_ready = !conv_busy && !dwconv_busy && pwconv_launch_safe;
     assign conv_start_req    = relaunch_pending && conv_launch_ready;
 
     always @(posedge clk or negedge rst_n) begin
@@ -248,6 +249,7 @@ module cnn #(
         .rst_n(rst_n),
         .busy(pwconv_busy),
         .done(pwconv_done),
+        .launch_safe(pwconv_launch_safe),
 
         // ---------- PWConv 输入数据流接口 ----------
         .in_stream_valid(dwconv_out_stream_valid),

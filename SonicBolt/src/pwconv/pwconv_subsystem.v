@@ -2,8 +2,8 @@
 /*
  * 模块名称: pwconv_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-04-03
- * 版本: v1.1
+ * 日期: 2026-04-08
+ * 版本: v1.2
  *
  * 功能概述:
  *   PWConv 独立子系统顶层。
@@ -14,6 +14,7 @@
  *   - 保持与 Conv1 顶层相近的 start / busy / done / out_stream_* 风格
  * 版本定位:
  *   -v1.1 增加了 fire 信号
+ *   -v1.2 增加了 launch_safe 输出信号，暴露给顶层用于启动下一轮 conv 计算
  */
 module pwconv_subsystem #(
     parameter integer M0      = 69,
@@ -23,6 +24,7 @@ module pwconv_subsystem #(
     input  wire          rst_n,
     output wire          busy,
     output wire          done,
+    output wire          launch_safe,
 
     // ---------- 输入数据流接口 ----------
     input  wire          in_stream_valid,  // 输入 tile 有效
@@ -128,6 +130,7 @@ module pwconv_subsystem #(
         // 控制信号
         .busy(busy),                            // out: 高电平表示当前仍在处理本张图
         .done(done),                            // out: 单拍完成脉冲
+        .launch_safe(launch_safe),              // out: 当前允许顶层提前发起下一帧
 
         // ---------- 输入数据流接口 ----------
         .in_stream_valid(in_stream_valid),      // in: 输入 tile 有效

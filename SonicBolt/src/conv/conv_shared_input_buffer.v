@@ -198,11 +198,10 @@ module conv_shared_input_buffer (
 
             // -----------------------------------------------------------------
             // Ping-Pong 状态更新逻辑
-            // (1) 新图写会话启动时更新 write_bank 为非活动 bank（这个时候non-active bank一定可用）, 同时置高写入流信号
-            // (2) 一张图写完并且写入流信号有效(防止外部乱发信号)时, 把当前 write_bank 标记为“待消费 ready”，同时更新 write_bank 并且关闭写入流信号
+            // (1) 进入新图写入会话时，write_inflight 置高，锁定后续写入必须继续写同一 bank
+            // (2)一张图写完并且写入流信号有效(防止外部乱发信号)时, 把当前 write_bank 标记为“待消费 ready”，同时更新 write_bank 并且关闭写入流信号
             // -----------------------------------------------------------------
-            if (start_write_session) begin
-                write_bank     <= ~active_bank;
+            if (start_write_session && !write_inflight) begin
                 write_inflight <= 1'b1;
             end
 

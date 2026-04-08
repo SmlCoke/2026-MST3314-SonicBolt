@@ -152,7 +152,7 @@ def preprocess_data() -> None:
 
 def compile_testbench() -> Path:
     """编译 CNN 全链路 RTL 与 testbench，返回生成的 vvp 路径。"""
-    vvp_path = TEST_DIR / "cnn_tb.vvp"
+    vvp_path = TEST_DIR / "cnn_test_tb.vvp"
     compile_log = TEST_DIR / "compile.log"
     compile_err = TEST_DIR / "compile_stderr.log"
 
@@ -162,9 +162,9 @@ def compile_testbench() -> Path:
     source_files += sorted(str(path) for path in POST_PROCESS_DIR.glob("*.v"))
     source_files += sorted(str(path) for path in UTILS_DIR.glob("*.v"))
     source_files.append(str(SRC_DIR / "cnn.v"))
-    source_files.append(str(SRC_DIR / "cnn_tb.v"))
+    source_files.append(str(SRC_DIR / "cnn_test_tb.v"))
 
-    cmd = ["iverilog", "-g2012", "-s", "cnn_tb", "-o", str(vvp_path), *source_files]
+    cmd = ["iverilog", "-g2012", "-s", "cnn_test_tb", "-o", str(vvp_path), *source_files]
     result = run_cmd(cmd, cwd=ROOT_DIR, stdout_path=compile_log, stderr_path=compile_err)
     if result.returncode != 0:
         raise RuntimeError(f"iverilog compile failed, check {compile_log} / {compile_err}")
@@ -310,6 +310,8 @@ def compare_stage_tiles(
     if len(sim_tiles) != expected_total:
         mismatches.append(f"{stage_name} tile count got {len(sim_tiles)}, expected {expected_total}")
 
+    # 定位到每个 sample 内的 token 索引，逐一对比 pos/group 元信息和 tile 数据
+    # 可以这样算是建立在每一层的 token 的输出顺序都是固定的
     for sample_idx in range(sample_count):
         for token_idx, golden_entry in enumerate(golden_tiles):
             sim_idx = sample_idx * len(golden_tiles) + token_idx
