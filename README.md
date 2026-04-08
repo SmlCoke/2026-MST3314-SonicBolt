@@ -3,7 +3,7 @@
 # ⚡️SonicBolt(声速闪电)
 **数字集成电路设计 · 高性能 CNN 加速器全流程设计**
 
-[![Version](https://img.shields.io/badge/Version-v5.2-blue.svg)]() [![Institution](https://img.shields.io/badge/Institution-SJTU-red.svg)](https://www.sjtu.edu.cn/) [![SmlCoke](https://img.shields.io/badge/SmlCoke-https://smlcoke.com-brightgreen.svg)](https://smlcoke.com) [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![Version](https://img.shields.io/badge/Version-v5.3-blue.svg)]() [![Institution](https://img.shields.io/badge/Institution-SJTU-red.svg)](https://www.sjtu.edu.cn/) [![SmlCoke](https://img.shields.io/badge/SmlCoke-https://smlcoke.com-brightgreen.svg)](https://smlcoke.com) [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 
 [项目简介](#i-项目简介) • [仓库结构](#ii-仓库结构) • [各模块说明](#iii-各模块说明) • [设计进度](#iv-设计进度)
 
@@ -80,8 +80,12 @@ CNN-Accelerator/
         ├── post_process/         # 后处理层 RTL 实现
         ├── utils/                # 公共模块（SRAM 封装、流水打拍、量化激活等）
         ├── cnn.v                 # 顶层模块，连接各子系统
-        ├── cnn_tb.v              # 测试平台，包含 Testbench 和
-        └── run_cnn_tb.py         # 仿真入口脚本，运行 Verilog 编译+仿真并验证结果
+        ├── cnn_test_tb.v         # 用于验证逐层输出是否正确的 testbench 模块
+        ├── cnn_sim_tb.v          # 用于完整仿真验证的 testbench 模块
+        ├── run_cnn_test_tb.py    # 自动化仿真脚本: 验证功能正确性 
+        ├── run_cnn_sim_tb.py     # 自动化仿真脚本: 完整仿真496个样本
+        ├── run_cnn_tb_common.py  # 自动化仿真脚本中的公共函数（如激励生成、结果验证等）
+        └── README.md             # 详细说明与设计细节
 ```
 
 
@@ -140,7 +144,7 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 
 ---
 
-### 3.5 `SonicBolt/` — Verilog RTL 实现（已实现第一版）
+### 3.5 `SonicBolt/` — Verilog RTL 实现
 
 本团队针对**高性能场景**设计的 Verilog 实现，目标：
 
@@ -150,13 +154,72 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 
 架构示意图可以参照 [figures.pptx](./SonicBolt/docs/figures.pptx) ，其中涵盖了各个版本的电路架构示意图以及时序分析图，供设计参考。
 
-当前已经实现完整功能版本：
+这里不对架构实现做详细介绍，具体设计细节请参见：
+
+1. 整体架构的设计说明文档：[SonicBolt/README.md](SonicBolt/README.md)
+2. Conv 子系统的设计说明文档：[SonicBolt/src/conv/docs/README.md](SonicBolt/src/conv/docs/README.md)
+3. DWConv 子系统的设计说明文档：[SonicBolt/src/dwconv/docs/README.md](SonicBolt/src/dwconv/docs/README.md)
+4. PWConv 子系统的设计说明文档：[SonicBolt/src/pwconv/docs/README.md](SonicBolt/src/pwconv/docs/README.md)
+5. Post Process 子系统的设计说明文档：[SonicBolt/src/post_process/docs/README.md](SonicBolt/src/post_process/docs/README.md)
+
+
+当前**已实现完整功能版本**：
 - CNN-v1.0: SonicBolt v5.1，全链路基础实现，包含所有功能，并且通过功能仿真验证
 - CNN-v1.1: SonicBolt v5.2，新增**输入 Ping-Pong 缓存机制**，实现流水线连续计算
 
 ---
 
-## IV. 设计进度
+## IV. Quick Start Guide
+
+### 4.1 环境准备
+
+#### (1) Python 环境
+
+Python 3.8+, 推荐使用 conda 管理环境：
+
+#### (2) Verilog 仿真环境
+
+本项目借助 Python 集成多个轻量级工具进行仿真测试，无需借助 `Modelsim`, `VCS`, `Vivado` 等重型EDA工具。需要用到的轻量级工具包括：
+- `Icarus Verilog`：Verilog 编译器，用于编译 Verilog 模块和 testbench下
+- `vvp`：Icarus Verilog 的仿真器，用于运行编译后的仿真文件
+- `gtkwave`：波形查看工具，用于查看仿真结果的波形图
+
+**Windows 环境下的安装方法：**
+
+三个工具的下载链接：[https://bleyer.org/icarus/](https://bleyer.org/icarus/)
+注意下载时勾选 `GTKWave` 组件。
+安装完成后，将`bin\`目录添加进入环境变量，确保 `iverilog`, `vvp`, `gtkwave` 等命令可以在终端中直接使用。
+更详细的安装教程可以参考：[SmlCoke: Verilog + VS Code 工具链配置](https://smlcoke.com/me/EDA/vscode/vscode/) 或者 [SmlCoke: OSS CAD Suite](https://smlcoke.com/me/EDA/OSS/oss/) 
+
+**Linux (Ubuntu/Debian) 环境下的安装方法：**
+
+可以直接使用 apt 包管理器安装：
+```bash
+sudo apt update
+sudo apt install iverilog gtkwave -y
+```
+
+**MacOS 环境下的安装方法：**
+
+推荐使用 Homebrew 进行安装：
+```bash
+brew install icarus-verilog gtkwave
+```
+
+#### (3) 运行仿真
+```bash
+cd SonicBolt/src
+# 运行功能仿真验证
+python run_cnn_test_tb.py
+# 运行完整仿真验证(496个样本)
+python run_cnn_sim_tb.py --start-sample 0 --sample-count 496
+```
+
+更多命令行参数以及仿真模式参见 [SonicBolt/src/run_cnn_test_tb.py](SonicBolt/src/run_cnn_test_tb.py) 和 [SonicBolt/src/run_cnn_sim_tb.py](SonicBolt/src/run_cnn_sim_tb.py)。
+
+---
+
+## V. 设计进度
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
