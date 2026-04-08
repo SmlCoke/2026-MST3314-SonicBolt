@@ -2,25 +2,18 @@
 /*
  * 模块名称: cnn
  * 作者: SonicBolt 团队
- * 日期: 2026-04-06
- * 版本: v1.2
+ * 日期: 2026-04-08
+ * 版本: v1.3
  *
- * 功能概述: SonicBolt 顶层电路
+ * 功能概述:
+ *   SonicBolt 顶层 CNN 管线，依次串接:
+ *     Conv -> DWConv -> PWConv -> Post-Process(Maxpool + FC + Sigmoid)
  *
- * 主数据流:
- *   输入图像
- *   -> conv_subsystem
- *   -> dwconv_subsystem
- *   -> pwconv_subsystem
- *   -> maxpool
- *   -> FC
- *   -> sigmoid
- *   -> 输出结果
- *
- * 版本定位:
- *   - v1.0 先实现 Conv-DWConv 级联
- *   - v1.1 在 v1.0 基础上集成 PWConv，完成三个卷积层的串联
- *   - v1.2 成功集成所有子系统，CNN 全流程实现成功，并且通过测试！
+ * 当前版本说明:
+ *   - 顶层已经接入 Conv 输入双帧 Ping-Pong 缓存握手。
+ *   - 外部通过 `img_wr_commit` 提交一整帧输入，通过 `img_wr_ready` 判断何时可以继续写下一帧。
+ *   - 为避免后级在上一帧尚未完全收尾时被下一帧 Conv 顶穿，顶层使用
+ *     `run_enable` / `relaunch_pending` 只在整条 CNN 空闲时重新拉起下一帧。
  */
 
 module cnn #(
@@ -33,16 +26,18 @@ module cnn #(
     parameter integer FC_M0          = 11,
     parameter integer FC_SHIFT_N     = 15
 )(
-    input  wire          clk,
-    input  wire          rst_n,
-    input  wire          start,
-    output wire          busy,
-    output wire          done,
+    input  wire          clk,               // 时钟
+    input  wire          rst_n,             // 低有效复位
+    input  wire          start,             // 开始进入连续推理模式
+    output wire          busy,              // CNN 任一子模块正在工作
+    output wire          done,              // 当前帧完成脉冲，由后处理输出
 
     // ------------ 输入图像写控制信号 ------------
-    input  wire          img_wr_en,            // 输入图像写使能
-    input  wire [4:0]    img_wr_addr,          // 输入图像行地址，30 行因此使用 5bit
-    input  wire [79:0]   img_wr_row_data,      // 输入图像写数据，一行 10 个像素，10 x 8bit = 80bit
+    input  wire          img_wr_en,         // 输入图像写使能
+    input  wire [4:0]    img_wr_addr,       // 输入图像行地址，30 行因此使用 5bit
+    input  wire [79:0]   img_wr_row_data,   // 输入图像写数据，一行 10 个像素，10 x 8bit = 80bit
+    input  wire          img_wr_commit,     // 当前帧完整写入结束
+    output wire          img_wr_ready,      // 当前允许写下一帧
 
     // ------------ Conv 权重 SRAM 写控制信号 ------------
     input  wire          conv_weight_wr_en,    // Conv 权重写使能
@@ -132,14 +127,45 @@ module cnn #(
     // Post-Process 子系统输出数据流
     wire         post_process_out_stream_valid;
     wire [63:0]  post_process_out_stream_data;
+    wire         conv_start_req;            // 真正送给 Conv 的启动脉冲
 
+    reg          run_enable;                // start 后进入连续推理模式
+    reg          relaunch_pending;          // 当前已有待发车帧，等待整条 CNN 空闲
+
+    // 只有当整条 CNN 都空闲时，才允许把待发车帧正式送入 Conv。
+    assign conv_start_req = relaunch_pending && !busy;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            run_enable       <= 1'b0;
+            relaunch_pending <= 1'b0;
+        end else begin
+            // Conv 一旦真正进入 busy，说明当前待发车帧已经被接收，清掉 pending。
+            if (conv_busy) begin
+                relaunch_pending <= 1'b0;
+            end
+
+            // 第一次 start 用来进入连续运行模式；
+            // 之后每次整帧 conv_done，都自动申请拉起下一帧。
+            if (start) begin
+                run_enable       <= 1'b1;
+                relaunch_pending <= 1'b1;
+            end else if (run_enable && conv_done) begin
+                relaunch_pending <= 1'b1;
+            end
+        end
+    end
+
+    // Conv 子系统：
+    // - 接收输入双帧缓存写入
+    // - 只有在 ready bank 存在且顶层允许时才真正启动
     conv_subsystem #(
         .M0(CONV_M0),
         .SHIFT_N(CONV_SHIFT_N)
     ) conv_inst (
         .clk(clk),
         .rst_n(rst_n),
-        .start(start),
+        .start(conv_start_req),
         .busy(conv_busy),
         .done(conv_done),
 
@@ -147,6 +173,8 @@ module cnn #(
         .img_wr_en(img_wr_en),
         .img_wr_addr(img_wr_addr),
         .img_wr_row_data(img_wr_row_data),
+        .img_wr_commit(img_wr_commit),
+        .img_wr_ready(img_wr_ready),
 
         // ------------ Conv 权重 SRAM 写控制信号 ------------
         .weight_wr_en(conv_weight_wr_en),
@@ -169,6 +197,7 @@ module cnn #(
         .out_stream_data(conv_out_stream_data)
     );
 
+    // DWConv 子系统：直接消费 Conv 的 token 流。
     dwconv_subsystem #(
         .M0(DWCONV_M0),
         .SHIFT_N(DWCONV_SHIFT_N)
@@ -180,10 +209,10 @@ module cnn #(
 
         // ---------- DWConv 输入数据流接口 ----------
         .in_stream_valid(conv_out_stream_valid),
-        .in_stream_fire(conv_out_stream_fire),
         .in_stream_last(conv_out_stream_last),
         .in_stream_pos(conv_out_stream_pos),
         .in_stream_group(conv_out_stream_group),
+        .in_stream_fire(conv_out_stream_fire),
         .in_stream_data(conv_out_stream_data),
 
         // ------------ DWConv 权重 SRAM 写控制信号 ------------
@@ -207,6 +236,7 @@ module cnn #(
         .out_stream_data(dwconv_out_stream_data)
     );
 
+    // PWConv 子系统：直接消费 DWConv 的 token 流。
     pwconv_subsystem #(
         .M0(PWCONV_M0),
         .SHIFT_N(PWCONV_SHIFT_N)
@@ -245,6 +275,7 @@ module cnn #(
         .out_stream_data(pwconv_out_stream_data)
     );
 
+    // 后处理子系统：Maxpool + FC + Sigmoid。
     post_process_subsystem #(
         .FC_M0(FC_M0),
         .FC_SHIFT_N(FC_SHIFT_N)
@@ -283,7 +314,8 @@ module cnn #(
     assign out_stream_valid = post_process_out_stream_valid;
     assign out_stream_data  = post_process_out_stream_data;
 
-    // 顶层完成信号以后处理子系统为准；busy 则反映 4 个子系统任一仍在工作。
+    // 顶层 busy 只要任一子系统在工作就保持为高；
+    // done 则以后处理完成为准，表示整帧真正走完整条 CNN。
     assign busy = conv_busy || dwconv_busy || pwconv_busy || post_process_busy;
     assign done = post_process_done;
 

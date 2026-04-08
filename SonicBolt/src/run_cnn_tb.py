@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-run_cnn_tb
+run_cnn_tb.py
 
-统一调度 CNN testbench 的单样本验证流程：
-1. 预处理 `SonicBolt/data/Test/` 中的单组测试数据
-2. 编译当前 SonicBolt RTL 与 `cnn_tb`
-3. 运行一次全链路仿真
-4. 解析 Conv / DWConv / PWConv / Maxpool / FC / Sigmoid 各层输出
-5. 与 `SonicBolt/data/Test/` 提供的黄金结果逐层对比
-6. 输出 `summary.json` 与 `mismatch_report.txt`
+功能概述:
+    一键执行全网络 CNN testbench，完成:
+    1. 生成 prepared_test 输入数据
+    2. 编译 RTL + testbench
+    3. 运行仿真
+    4. 解析各层输出日志
+    5. 与 golden 结果对比并生成报告
+
+当前版本说明:
+    - 支持通过 --sample-count 重复输入同一张测试图，用于验证输入双帧缓存。
+    - 结果目录统一写到 SonicBolt/results/test。
 """
 
 from __future__ import annotations
@@ -26,7 +30,7 @@ import textwrap
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 # 设置关键路径全局变量
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -43,7 +47,6 @@ PREP_SCRIPT = DATA_DIR / "prepare_test_data.py"
 RESULT_DIR = ROOT_DIR / "SonicBolt" / "results"
 TEST_DIR = RESULT_DIR / "test"
 
-# 当前只保留单样本流程，因此 sample id 固定为 0
 POS_COUNT = 9
 GROUP_COUNT = 8
 TOKEN_COUNT = POS_COUNT * GROUP_COUNT
@@ -56,6 +59,10 @@ FC_HEX_LEN = 4
 SIGMOID_HEX_LEN = 16
 SIGMOID_TOL = 1e-4
 
+StageEntry = Tuple[int, int, str]
+
+# testbench 日志正则：
+# 保持与 cnn_tb.v 中的 $display 文本一一对应，便于后处理。
 CONV_RE = re.compile(
     r"^Conv-Out-Stream: pos=(?P<pos>\d+) group=(?P<group>\d+) data=(?P<data>[0-9a-fA-FxXzZ]+)$"
 )
@@ -68,17 +75,15 @@ PWC_RE = re.compile(
 MAXPOOL_RE = re.compile(
     r"^Maxpool-Out-Stream: pos=(?P<pos>\d+) group=(?P<group>\d+) data=(?P<data>[0-9a-fA-FxXzZ]+)$"
 )
-FC_RE = re.compile(
-    r"^FC-Out-Stream: data=(?P<data>[0-9a-fA-FxXzZ]+)$"
-)
-SIGMOID_RE = re.compile(
-    r"^Sigmoid-Out-Stream: data=(?P<data>[0-9a-fA-FxXzZ]+)$"
-)
+FC_RE = re.compile(r"^FC-Out-Stream: data=(?P<data>[0-9a-fA-FxXzZ]+)$")
+SIGMOID_RE = re.compile(r"^Sigmoid-Out-Stream: data=(?P<data>[0-9a-fA-FxXzZ]+)$")
+SAMPLE_DONE_RE = re.compile(r"^SAMPLE_DONE sample=(?P<sample>\d+) cycles=(?P<cycles>\d+)$")
 
 
 def parse_args() -> argparse.Namespace:
     """解析命令行参数。"""
-    parser = argparse.ArgumentParser(description="Run the full CNN testbench on the single Test sample")
+    parser = argparse.ArgumentParser(description="Run the full CNN testbench with repeated input frames")
+    parser.add_argument("--sample-count", type=int, default=3, help="Repeat the single prepared test sample N times")
     parser.add_argument("--wave", action="store_true", help="Enable VCD dump")
     parser.add_argument("--keep-build", action="store_true", help="Keep existing files in results/")
     return parser.parse_args()
@@ -166,16 +171,17 @@ def compile_testbench() -> Path:
     return vvp_path
 
 
-def load_stage_tile_file(path: Path, data_hex_len: int) -> Dict[Tuple[int, int], str]:
-    """读取按 pos/group 编排的 tile 黄金文件。"""
-    tiles: Dict[Tuple[int, int], str] = {}
+def load_stage_tile_sequence(path: Path, data_hex_len: int) -> List[StageEntry]:
+    """读取带 pos/group 元信息的 stage tile golden 文件。"""
+    tiles: List[StageEntry] = []
     with path.open("r", encoding="utf-8") as fh:
         for raw_line in fh:
             line = raw_line.strip()
             if not line:
                 continue
             pos_text, group_text, tile_hex = line.split()
-            tiles[(int(pos_text), int(group_text))] = tile_hex.lower().zfill(data_hex_len)
+            tiles.append((int(pos_text), int(group_text), tile_hex.lower().zfill(data_hex_len)))
+    tiles.sort(key=lambda item: (item[0], item[1]))
     return tiles
 
 
@@ -192,7 +198,7 @@ def load_single_word_file(path: Path, data_hex_len: int) -> List[str]:
 
 
 def load_sigmoid_golden(path: Path) -> List[float]:
-    """读取最终 Sigmoid 的黄金浮点结果。"""
+    """读取最终 sigmoid 浮点 golden 输出。"""
     values: List[float] = []
     with path.open("r", encoding="utf-8") as fh:
         for raw_line in fh:
@@ -206,43 +212,54 @@ def load_sigmoid_golden(path: Path) -> List[float]:
 
 
 def load_golden_results() -> dict:
-    """加载各层黄金结果。"""
+    """统一装载各层 golden 结果。"""
     return {
-        "conv": load_stage_tile_file(PREP_DIR / "samples" / "sample_conv_tiles.mem", CONV_HEX_LEN),
-        "dwconv": load_stage_tile_file(PREP_DIR / "samples" / "sample_dwconv_tiles.mem", DWC_HEX_LEN),
-        "pwc": load_stage_tile_file(PREP_DIR / "samples" / "sample_pwconv_tiles.mem", PWC_HEX_LEN),
-        "maxpool": load_stage_tile_file(PREP_DIR / "samples" / "sample_maxpool_tiles.mem", MAXPOOL_HEX_LEN),
+        "conv": load_stage_tile_sequence(PREP_DIR / "samples" / "sample_conv_tiles.mem", CONV_HEX_LEN),
+        "dwconv": load_stage_tile_sequence(PREP_DIR / "samples" / "sample_dwconv_tiles.mem", DWC_HEX_LEN),
+        "pwc": load_stage_tile_sequence(PREP_DIR / "samples" / "sample_pwconv_tiles.mem", PWC_HEX_LEN),
+        "maxpool": load_stage_tile_sequence(PREP_DIR / "samples" / "sample_maxpool_tiles.mem", MAXPOOL_HEX_LEN),
         "fc": load_single_word_file(PREP_DIR / "samples" / "sample_fc_outputs.mem", FC_HEX_LEN),
         "sigmoid": load_sigmoid_golden(TEST_DATA_DIR / "Out.txt"),
     }
 
 
 def parse_sim_output(log_path: Path) -> dict:
-    """从仿真日志中提取各层输出。"""
+    """解析仿真日志，提取各层输出序列与 sample_done 标记。"""
     parsed = {
-        "conv": {},
-        "dwconv": {},
-        "pwc": {},
-        "maxpool": {},
+        "conv": [],
+        "dwconv": [],
+        "pwc": [],
+        "maxpool": [],
         "fc": [],
         "sigmoid": [],
+        "sample_done": [],
     }
 
     with log_path.open("r", encoding="utf-8") as fh:
         for raw_line in fh:
             line = raw_line.strip()
             if match := CONV_RE.match(line):
-                parsed["conv"][(int(match.group("pos")), int(match.group("group")))] = match.group("data").lower().zfill(CONV_HEX_LEN)
+                parsed["conv"].append(
+                    (int(match.group("pos")), int(match.group("group")), match.group("data").lower().zfill(CONV_HEX_LEN))
+                )
             elif match := DWC_RE.match(line):
-                parsed["dwconv"][(int(match.group("pos")), int(match.group("group")))] = match.group("data").lower().zfill(DWC_HEX_LEN)
+                parsed["dwconv"].append(
+                    (int(match.group("pos")), int(match.group("group")), match.group("data").lower().zfill(DWC_HEX_LEN))
+                )
             elif match := PWC_RE.match(line):
-                parsed["pwc"][(int(match.group("pos")), int(match.group("group")))] = match.group("data").lower().zfill(PWC_HEX_LEN)
+                parsed["pwc"].append(
+                    (int(match.group("pos")), int(match.group("group")), match.group("data").lower().zfill(PWC_HEX_LEN))
+                )
             elif match := MAXPOOL_RE.match(line):
-                parsed["maxpool"][(int(match.group("pos")), int(match.group("group")))] = match.group("data").lower().zfill(MAXPOOL_HEX_LEN)
+                parsed["maxpool"].append(
+                    (int(match.group("pos")), int(match.group("group")), match.group("data").lower().zfill(MAXPOOL_HEX_LEN))
+                )
             elif match := FC_RE.match(line):
                 parsed["fc"].append(match.group("data").lower().zfill(FC_HEX_LEN))
             elif match := SIGMOID_RE.match(line):
                 parsed["sigmoid"].append(match.group("data").lower().zfill(SIGMOID_HEX_LEN))
+            elif match := SAMPLE_DONE_RE.match(line):
+                parsed["sample_done"].append((int(match.group("sample")), int(match.group("cycles"))))
 
     return parsed
 
@@ -258,59 +275,66 @@ def decode_fp32_word(word_hex: str) -> float:
     return struct.unpack("<f", struct.pack("<I", int(word_hex, 16)))[0]
 
 
-def run_single_sample(vvp_path: Path, enable_wave: bool) -> Tuple[Path, dict]:
-    """运行单样本仿真，并返回日志路径与解析结果。"""
+def run_testbench(vvp_path: Path, enable_wave: bool, sample_count: int) -> Tuple[Path, dict]:
+    """运行仿真并返回日志路径与解析结果。"""
     stdout_log = TEST_DIR / "simulation.log"
     stderr_log = TEST_DIR / "simulation_stderr.log"
     wave_file = TEST_DIR / "cnn_tb.vcd"
+    timeout_cycles = sample_count * 5000 + 1000
 
     cmd = [
         "vvp",
         str(vvp_path.resolve()),
         f"+PREP_DIR={PREP_DIR.resolve()}",
         f"+WAVE_FILE={wave_file.resolve()}",
-        "+TIMEOUT_CYCLES=4000",
+        f"+TIMEOUT_CYCLES={timeout_cycles}",
+        f"+SAMPLE_COUNT={sample_count}",
         f"+WAVE={1 if enable_wave else 0}",
     ]
 
     result = run_cmd(cmd, cwd=TEST_DIR, stdout_path=stdout_log, stderr_path=stderr_log)
     if result.returncode != 0:
-        raise RuntimeError(
-            f"Simulation failed, check {stdout_log.name} / {stderr_log.name}"
-        )
+        raise RuntimeError(f"Simulation failed, check {stdout_log.name} / {stderr_log.name}")
     return stdout_log, parse_sim_output(stdout_log)
 
 
 def compare_stage_tiles(
     stage_name: str,
-    sim_tiles: Dict[Tuple[int, int], str],
-    golden_tiles: Dict[Tuple[int, int], str],
+    sim_tiles: List[StageEntry],
+    golden_tiles: List[StageEntry],
+    sample_count: int,
 ) -> List[str]:
-    """对比带 pos/group 的中间层输出。"""
+    """比较 Conv / DWConv / PWConv / Maxpool 的 tile 序列。"""
     mismatches: List[str] = []
-    if len(sim_tiles) != TOKEN_COUNT:
-        mismatches.append(
-            f"{stage_name} tile count got {len(sim_tiles)}, expected {TOKEN_COUNT}"
-        )
+    expected_total = len(golden_tiles) * sample_count
+    if len(sim_tiles) != expected_total:
+        mismatches.append(f"{stage_name} tile count got {len(sim_tiles)}, expected {expected_total}")
 
-    for pos in range(POS_COUNT):
-        for group in range(GROUP_COUNT):
-            key = (pos, group)
-            sim_value = sim_tiles.get(key)
-            golden_value = golden_tiles.get(key)
-            if sim_value is None:
-                mismatches.append(f"{stage_name} missing tile pos={pos} group={group}")
-            elif golden_value is None:
-                mismatches.append(f"{stage_name} golden missing pos={pos} group={group}")
+    for sample_idx in range(sample_count):
+        for token_idx, golden_entry in enumerate(golden_tiles):
+            sim_idx = sample_idx * len(golden_tiles) + token_idx
+            if sim_idx >= len(sim_tiles):
+                mismatches.append(f"{stage_name} missing tile sample={sample_idx} token={token_idx}")
+                continue
+
+            golden_pos, golden_group, golden_value = golden_entry
+            sim_pos, sim_group, sim_value = sim_tiles[sim_idx]
+
+            if (sim_pos, sim_group) != (golden_pos, golden_group):
+                mismatches.append(
+                    f"{stage_name} metadata mismatch sample={sample_idx} token={token_idx}\n"
+                    f"  sim   = pos={sim_pos} group={sim_group}\n"
+                    f"  golden= pos={golden_pos} group={golden_group}"
+                )
             elif tile_has_unknown(sim_value):
                 mismatches.append(
-                    f"{stage_name} out unknown tile pos={pos} group={group}\n"
+                    f"{stage_name} out unknown sample={sample_idx} pos={sim_pos} group={sim_group}\n"
                     f"  sim   = {sim_value}\n"
                     f"  golden= {golden_value}"
                 )
             elif sim_value != golden_value:
                 mismatches.append(
-                    f"{stage_name} out mismatch pos={pos} group={group}\n"
+                    f"{stage_name} out mismatch sample={sample_idx} pos={sim_pos} group={sim_group}\n"
                     f"  sim   = {sim_value}\n"
                     f"  golden= {golden_value}"
                 )
@@ -318,27 +342,27 @@ def compare_stage_tiles(
     return mismatches
 
 
-def compare_fc_outputs(sim_words: List[str], golden_words: List[str]) -> List[str]:
-    """对比 FC 阶段输出。"""
+def compare_fc_outputs(sim_words: List[str], golden_words: List[str], sample_count: int) -> List[str]:
+    """比较 FC 输出，按 sample_count 重复同一份 golden。"""
     mismatches: List[str] = []
-    if len(sim_words) != len(golden_words):
-        mismatches.append(f"fc output count got {len(sim_words)}, expected {len(golden_words)}")
+    expected_words = golden_words * sample_count
+    if len(sim_words) != len(expected_words):
+        mismatches.append(f"fc output count got {len(sim_words)}, expected {len(expected_words)}")
 
-    for idx, golden_word in enumerate(golden_words):
+    for idx, golden_word in enumerate(expected_words):
         if idx >= len(sim_words):
-            mismatches.append(f"fc missing output index={idx}")
+            mismatches.append(f"fc missing output sample={idx // len(golden_words)} index={idx % len(golden_words)}")
             continue
         sim_word = sim_words[idx]
-        # print(f"Comparing FC output index={idx} sim={sim_word} golden={golden_word}")
         if tile_has_unknown(sim_word):
             mismatches.append(
-                f"fc out unknown index={idx}\n"
+                f"fc out unknown sample={idx // len(golden_words)} index={idx % len(golden_words)}\n"
                 f"  sim   = {sim_word}\n"
                 f"  golden= {golden_word}"
             )
         elif sim_word != golden_word:
             mismatches.append(
-                f"fc out mismatch index={idx}\n"
+                f"fc out mismatch sample={idx // len(golden_words)} index={idx % len(golden_words)}\n"
                 f"  sim   = {sim_word}\n"
                 f"  golden= {golden_word}"
             )
@@ -346,50 +370,53 @@ def compare_fc_outputs(sim_words: List[str], golden_words: List[str]) -> List[st
     return mismatches
 
 
-def compare_sigmoid_outputs(sim_words: List[str], golden_values: List[float]) -> List[str]:
-    """对比 Sigmoid 阶段输出。"""
+def compare_sigmoid_outputs(sim_words: List[str], golden_values: List[float], sample_count: int) -> List[str]:
+    """比较最终 sigmoid 输出，容忍少量浮点误差。"""
     mismatches: List[str] = []
-    if len(sim_words) != 1:
-        mismatches.append(f"sigmoid output count got {len(sim_words)}, expected 1")
-        return mismatches
+    if len(sim_words) != sample_count:
+        mismatches.append(f"sigmoid output count got {len(sim_words)}, expected {sample_count}")
 
-    # print(f"Comparing Sigmoid output sim={sim_words[0]} golden={golden_values}")
-    # sim_words 中只有一个序列，拼接起来的两个FP32
-    sim_word = sim_words[0]
-    if tile_has_unknown(sim_word):
-        mismatches.append(f"sigmoid out unknown word={sim_word}")
-        return mismatches
+    for sample_idx in range(sample_count):
+        if sample_idx >= len(sim_words):
+            mismatches.append(f"sigmoid missing output sample={sample_idx}")
+            continue
 
-    # 提取第一个分类结果
-    sim_cls0 = decode_fp32_word(sim_word[8:16])
-    # 提取第二个分类结果
-    sim_cls1 = decode_fp32_word(sim_word[0:8])
-    sim_values = [sim_cls0, sim_cls1]
+        sim_word = sim_words[sample_idx]
+        if tile_has_unknown(sim_word):
+            mismatches.append(f"sigmoid out unknown sample={sample_idx} word={sim_word}")
+            continue
 
-    for idx, golden_value in enumerate(golden_values):
-        sim_value = sim_values[idx]
-        if abs(sim_value - golden_value) > SIGMOID_TOL:
-            mismatches.append(
-                f"sigmoid out mismatch class={idx}\n"
-                f"  sim   = {sim_value:.9f}\n"
-                f"  golden= {golden_value:.9f}\n"
-                f"  absdiff={abs(sim_value - golden_value):.9f}"
-            )
+        sim_cls0 = decode_fp32_word(sim_word[8:16])
+        sim_cls1 = decode_fp32_word(sim_word[0:8])
+        sim_values = [sim_cls0, sim_cls1]
+
+        for class_idx, golden_value in enumerate(golden_values):
+            sim_value = sim_values[class_idx]
+            if abs(sim_value - golden_value) > SIGMOID_TOL:
+                mismatches.append(
+                    f"sigmoid out mismatch sample={sample_idx} class={class_idx}\n"
+                    f"  sim   = {sim_value:.9f}\n"
+                    f"  golden= {golden_value:.9f}\n"
+                    f"  absdiff={abs(sim_value - golden_value):.9f}"
+                )
 
     return mismatches
 
 
-def compare_sample(sim_results: dict) -> List[str]:
-    """逐层比较仿真结果与黄金数据。"""
+def compare_results(sim_results: dict, sample_count: int) -> List[str]:
+    """汇总全部层级比较结果。"""
     golden_results = load_golden_results()
     mismatches: List[str] = []
 
-    mismatches.extend(compare_stage_tiles("conv", sim_results["conv"], golden_results["conv"]))
-    mismatches.extend(compare_stage_tiles("dwconv", sim_results["dwconv"], golden_results["dwconv"]))
-    mismatches.extend(compare_stage_tiles("pwconv", sim_results["pwc"], golden_results["pwc"]))
-    mismatches.extend(compare_stage_tiles("maxpool", sim_results["maxpool"], golden_results["maxpool"]))
-    mismatches.extend(compare_fc_outputs(sim_results["fc"], golden_results["fc"]))
-    mismatches.extend(compare_sigmoid_outputs(sim_results["sigmoid"], golden_results["sigmoid"]))
+    mismatches.extend(compare_stage_tiles("conv", sim_results["conv"], golden_results["conv"], sample_count))
+    mismatches.extend(compare_stage_tiles("dwconv", sim_results["dwconv"], golden_results["dwconv"], sample_count))
+    mismatches.extend(compare_stage_tiles("pwconv", sim_results["pwc"], golden_results["pwc"], sample_count))
+    mismatches.extend(compare_stage_tiles("maxpool", sim_results["maxpool"], golden_results["maxpool"], sample_count))
+    mismatches.extend(compare_fc_outputs(sim_results["fc"], golden_results["fc"], sample_count))
+    mismatches.extend(compare_sigmoid_outputs(sim_results["sigmoid"], golden_results["sigmoid"], sample_count))
+
+    if len(sim_results["sample_done"]) != sample_count:
+        mismatches.append(f"sample_done count got {len(sim_results['sample_done'])}, expected {sample_count}")
 
     return mismatches
 
@@ -427,9 +454,12 @@ def print_summary_box(title: str, fields: List[Tuple[str, str]]) -> None:
 
 
 def main() -> int:
-    """单样本测试主流程。"""
+    """主入口：准备数据、编译、仿真、比对、落盘报告。"""
     # 1. 解析命令行参数
     args = parse_args()
+    if args.sample_count <= 0:
+        raise SystemExit("--sample-count must be >= 1")
+
     # 2. 清理旧结果，然后准备 results 目录
     ensure_results_dir(args.keep_build)
     # 3. 调用数据预处理脚本，生成参数mem文件以及标准输出结果文件
@@ -437,13 +467,14 @@ def main() -> int:
     # 4. 调用 Icarus Verilog 工具编译全部 RTL 与 testbench，生成 vvp 可执行文件
     vvp_path = compile_testbench()
     # 5. 调用 vvp 运行仿真，生成仿真日志
-    stdout_log, sim_results = run_single_sample(vvp_path, args.wave)
+    stdout_log, sim_results = run_testbench(vvp_path, args.wave, args.sample_count)
+
     # 6. 对比仿真结果与黄金数据，生成 mismatch 列表
-    mismatches = compare_sample(sim_results)
+    mismatches = compare_results(sim_results, args.sample_count)
     matched = len(mismatches) == 0
 
     summary = {
-        "sample_count": 1,
+        "sample_count": args.sample_count,
         "wave_enabled": args.wave,
         "prepared_dir": str(PREP_DIR.resolve()),
         "vvp_path": str(vvp_path.resolve()),
@@ -454,13 +485,10 @@ def main() -> int:
             "maxpool": len(sim_results["maxpool"]),
             "fc": len(sim_results["fc"]),
             "sigmoid": len(sim_results["sigmoid"]),
+            "sample_done": len(sim_results["sample_done"]),
         },
-        "samples": [
-            {
-                "log": stdout_log.name,
-                "matched": matched,
-            }
-        ],
+        "log": stdout_log.name,
+        "matched": matched,
         "mismatch_count": len(mismatches),
     }
     write_reports(summary, mismatches)
@@ -469,11 +497,10 @@ def main() -> int:
         print_summary_box(
             "T_T  CNN testbench result: FAILED",
             [
-                ("Total tests", "1"),
-                ("Passed count", "0"),
-                ("Passed IDs", "None"),
-                ("Failed count", "1"),
-                ("Full report", "mismatch_report.txt"),
+                ("Samples", str(args.sample_count)),
+                ("Passed", "0"),
+                ("Failed", str(args.sample_count)),
+                ("Report", "mismatch_report.txt"),
             ],
         )
         return 1
@@ -481,10 +508,10 @@ def main() -> int:
     print_summary_box(
         "^_^  CNN testbench result: PASSED",
         [
-            ("Total tests", "1"),
-            ("Passed count", "1"),
-            ("Failed count", "0"),
-            ("Failed IDs", "None"),
+            ("Samples", str(args.sample_count)),
+            ("Passed", str(args.sample_count)),
+            ("Failed", "0"),
+            ("Report", "mismatch_report.txt"),
         ],
     )
     return 0

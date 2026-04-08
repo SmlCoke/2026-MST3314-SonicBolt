@@ -1,10 +1,9 @@
 `timescale 1ns / 1ps
-
 /*
  * 模块名称: cnn_tb
  * 作者: SonicBolt 团队
- * 日期: 2026-04-06
- * 版本: v1.2
+ * 日期: 2026-04-08
+ * 版本: v1.3
  *
  * 功能概述:
  *   面向整个 SonicBolt 系统的 testbench。
@@ -23,6 +22,8 @@
  *   - 当前架构采用 `9 个 pos x 8 个 group = 72 个 token`
  *   - 当前 testbench 采用单帧缓存流程：先装载完整输入图，再启动计算
  *   - v1.1 级联了 PWConv
+ *   - v1.2 级联了整个系统，仿真测试通过
+ *   - v1.3 优化了输入Ping-Pong缓冲和启动机制
  */
 
 module cnn_tb #(
@@ -34,8 +35,8 @@ module cnn_tb #(
     localparam integer INPUT_ROW_COUNT   = 30;
 
     // Conv 层权重 / 偏置 mem depth
-    localparam integer CONV_WEIGHT_WORD_COUNT = 88;
-    localparam integer CONV_BIAS_WORD_COUNT   = 8;
+    localparam integer CONV_WEIGHT_WORD_COUNT   = 88;
+    localparam integer CONV_BIAS_WORD_COUNT     = 8;
 
     // DWConv 层权重 / 偏置 mem depth
     localparam integer DWCONV_WEIGHT_WORD_COUNT = 24;
@@ -51,7 +52,7 @@ module cnn_tb #(
     localparam integer SIGMOID_LUT_WORD_COUNT   = 256;
 
     // Token 计数
-    localparam integer TOKEN_COUNT = 72;
+    localparam integer TOKEN_COUNT              = 72;
 
     // DUT 顶层控制与状态信号。
     reg clk;
@@ -64,6 +65,8 @@ module cnn_tb #(
     reg [4:0]  img_wr_addr;
     reg        img_wr_en;
     reg [79:0] img_wr_row_word;
+    reg        img_wr_commit;
+    wire       img_wr_ready;
 
     // Conv 权重写口：11 个 bank x 8 个 group = 88 个 224bit word。
     reg         conv_weight_wr_en;
@@ -136,46 +139,55 @@ module cnn_tb #(
     wire [127:0] pwconv_out_stream_data;
 
     // Maxpool 输出流接口：每拍最多输出一个 32bit token。
-    wire        maxpool_out_stream_valid;
-    wire        maxpool_out_stream_last;
-    wire        maxpool_out_stream_fire;
-    wire [3:0]  maxpool_out_stream_pos;
-    wire [2:0]  maxpool_out_stream_group;
-    wire [31:0] maxpool_out_stream_data;
+    wire         maxpool_out_stream_valid;
+    wire         maxpool_out_stream_last;
+    wire         maxpool_out_stream_fire;
+    wire [3:0]   maxpool_out_stream_pos;
+    wire [2:0]   maxpool_out_stream_group;
+    wire [31:0]  maxpool_out_stream_data;
 
     // FC 输出流接口：每次样本输出一个 16bit 结果。
-    wire        fc_out_stream_valid;
-    wire [15:0] fc_out_stream_data;
-
+    wire         fc_out_stream_valid;
+    wire [15:0]  fc_out_stream_data;
     // Sigmoid 输出流接口：每次样本输出一个 64bit 结果。
-    wire        sigmoid_out_stream_valid;
-    wire [63:0] sigmoid_out_stream_data;
+    wire         sigmoid_out_stream_valid;
+    wire [63:0]  sigmoid_out_stream_data;
 
     // CNN 输出流接口
     wire         out_stream_valid;
     wire [63:0]  out_stream_data;
 
     // 本地测试数据缓存数组。
-    reg [79:0]   input_rows_mem         [0:INPUT_ROW_COUNT-1];
-    reg [223:0]  conv_weight_words_mem  [0:CONV_WEIGHT_WORD_COUNT-1];
-    reg [63:0]   conv_bias_words_mem    [0:CONV_BIAS_WORD_COUNT-1];
-    reg [95:0]   dwconv_weight_words_mem[0:DWCONV_WEIGHT_WORD_COUNT-1];
-    reg [63:0]   dwconv_bias_words_mem  [0:DWCONV_BIAS_WORD_COUNT-1];
-    reg [127:0]  pwconv_weight_words_mem[0:PWCONV_WEIGHT_WORD_COUNT-1];
-    reg [63:0]   pwconv_bias_words_mem  [0:PWCONV_BIAS_WORD_COUNT-1];
-    reg [63:0]   fc_weight_words_mem    [0:FC_WEIGHT_WORD_COUNT-1];
-    reg [31:0]   fc_bias_words_mem      [0:FC_BIAS_WORD_COUNT-1];
-    reg [31:0]   sigmoid_lut_words_mem  [0:SIGMOID_LUT_WORD_COUNT-1];
+    reg [79:0]   input_rows_mem          [0:INPUT_ROW_COUNT-1];
+    reg [223:0]  conv_weight_words_mem   [0:CONV_WEIGHT_WORD_COUNT-1];
+    reg [63:0]   conv_bias_words_mem     [0:CONV_BIAS_WORD_COUNT-1];
+    reg [95:0]   dwconv_weight_words_mem [0:DWCONV_WEIGHT_WORD_COUNT-1];
+    reg [63:0]   dwconv_bias_words_mem   [0:DWCONV_BIAS_WORD_COUNT-1];
+    reg [127:0]  pwconv_weight_words_mem [0:PWCONV_WEIGHT_WORD_COUNT-1];
+    reg [63:0]   pwconv_bias_words_mem   [0:PWCONV_BIAS_WORD_COUNT-1];
+    reg [63:0]   fc_weight_words_mem     [0:FC_WEIGHT_WORD_COUNT-1];
+    reg [31:0]   fc_bias_words_mem       [0:FC_BIAS_WORD_COUNT-1];
+    reg [31:0]   sigmoid_lut_words_mem   [0:SIGMOID_LUT_WORD_COUNT-1];
 
     // 仿真流程控制变量。
     integer timeout_cycles;
     integer cycle_counter;
+    integer runtime_wave_enable;
+    integer runtime_sample_count;
+    integer sample_done_counter;
+
     integer conv_tile_counter;
     integer dwconv_tile_counter;
     integer pwconv_tile_counter;
     integer maxpool_tile_counter;
     integer fc_tile_counter;
     integer sigmoid_tile_counter;
+
+    integer conv_frame_token_count;
+    integer dwconv_frame_token_count;
+    integer pwconv_frame_token_count;
+    integer maxpool_frame_token_count;
+
     integer row_idx;
     integer conv_weight_idx;
     integer conv_bias_idx;
@@ -186,12 +198,13 @@ module cnn_tb #(
     integer fc_weight_idx;
     integer fc_bias_idx;
     integer sigmoid_lut_idx;
-    integer runtime_wave_enable;
+    integer sample_idx;
 
-    reg conv_seen_first_tile;
-    reg dwconv_seen_first_tile;
-    reg pwconv_seen_first_tile;
-    reg maxpool_seen_first_tile;
+    // 用于检查各层 token 流是否出现中断。
+    reg conv_in_frame;
+    reg dwconv_in_frame;
+    reg pwconv_in_frame;
+    reg maxpool_in_frame;
     reg conv_stream_gap_error;
     reg dwconv_stream_gap_error;
     reg pwconv_stream_gap_error;
@@ -227,49 +240,35 @@ module cnn_tb #(
         .start(start),
         .busy(busy),
         .done(done),
-
-        // ------------ 输入图像写控制信号 ------------
         .img_wr_en(img_wr_en),
         .img_wr_addr(img_wr_addr),
         .img_wr_row_data(img_wr_row_word),
-
-        // ------------ Conv 权重 SRAM 写控制信号 ------------
+        .img_wr_commit(img_wr_commit),
+        .img_wr_ready(img_wr_ready),
         .conv_weight_wr_en(conv_weight_wr_en),
         .conv_weight_wr_bank(conv_weight_wr_bank),
         .conv_weight_wr_addr(conv_weight_wr_addr),
         .conv_weight_wr_data(conv_weight_wr_data),
-
-        // ------------ DWConv 权重 SRAM 写控制信号 ------------
         .dwconv_weight_wr_en(dwconv_weight_wr_en),
         .dwconv_weight_wr_bank(dwconv_weight_wr_bank),
         .dwconv_weight_wr_addr(dwconv_weight_wr_addr),
         .dwconv_weight_wr_data(dwconv_weight_wr_data),
-
-        // ------------ PWConv 权重 SRAM 写控制信号 ------------
         .pwconv_weight_wr_en(pwconv_weight_wr_en),
         .pwconv_weight_wr_bank(pwconv_weight_wr_bank),
         .pwconv_weight_wr_addr(pwconv_weight_wr_addr),
         .pwconv_weight_wr_data(pwconv_weight_wr_data),
-
-        // ------------ Conv 偏置 SRAM 写控制信号 ------------
         .conv_bias_wr_en(conv_bias_wr_en),
         .conv_bias_wr_bank(conv_bias_wr_bank),
         .conv_bias_wr_addr(conv_bias_wr_addr),
         .conv_bias_wr_data(conv_bias_wr_data),
-
-        // ------------ DWConv 偏置 SRAM 写控制信号 ------------
         .dwconv_bias_wr_en(dwconv_bias_wr_en),
         .dwconv_bias_wr_bank(dwconv_bias_wr_bank),
         .dwconv_bias_wr_addr(dwconv_bias_wr_addr),
         .dwconv_bias_wr_data(dwconv_bias_wr_data),
-
-        // ------------ PWConv 偏置 SRAM 写控制信号 ------------
         .pwconv_bias_wr_en(pwconv_bias_wr_en),
         .pwconv_bias_wr_bank(pwconv_bias_wr_bank),
         .pwconv_bias_wr_addr(pwconv_bias_wr_addr),
         .pwconv_bias_wr_data(pwconv_bias_wr_data),
-
-        // ------------ FC / Sigmoid 参数写控制信号 ------------
         .fc_weight_wr_en(fc_weight_wr_en),
         .fc_weight_wr_addr(fc_weight_wr_addr),
         .fc_weight_wr_data(fc_weight_wr_data),
@@ -278,8 +277,6 @@ module cnn_tb #(
         .sigmoid_lut_wr_en(sigmoid_lut_wr_en),
         .sigmoid_lut_wr_addr(sigmoid_lut_wr_addr),
         .sigmoid_lut_wr_data(sigmoid_lut_wr_data),
-
-        // ------------ 数据流接口 ------------
         .out_stream_valid(out_stream_valid),
         .out_stream_data(out_stream_data)
     );
@@ -316,9 +313,8 @@ module cnn_tb #(
     assign maxpool_out_stream_group = cnn_inst.post_process_inst.u_maxpool.out_group;
     assign maxpool_out_stream_data  = cnn_inst.post_process_inst.u_maxpool.out_data_bus;
 
-    assign fc_out_stream_valid = cnn_inst.post_process_inst.u_fc.out_valid;
-    assign fc_out_stream_data  = cnn_inst.post_process_inst.u_fc.out_data_bus;
-
+    assign fc_out_stream_valid      = cnn_inst.post_process_inst.u_fc.out_valid;
+    assign fc_out_stream_data       = cnn_inst.post_process_inst.u_fc.out_data_bus;
     assign sigmoid_out_stream_valid = cnn_inst.post_process_inst.out_stream_valid;
     assign sigmoid_out_stream_data  = cnn_inst.post_process_inst.out_stream_data;
 
@@ -331,10 +327,10 @@ module cnn_tb #(
             clk = 1'b0;
             rst_n = 1'b0;
             start = 1'b0;
-
             img_wr_en = 1'b0;
             img_wr_addr = 5'd0;
             img_wr_row_word = 80'd0;
+            img_wr_commit = 1'b0;
 
             conv_weight_wr_en = 1'b0;
             conv_weight_wr_bank = 5'd0;
@@ -372,7 +368,12 @@ module cnn_tb #(
             sigmoid_lut_wr_addr = 8'd0;
             sigmoid_lut_wr_data = 32'd0;
 
+            timeout_cycles = 4000;
+            runtime_wave_enable = ENABLE_WAVE;
+            runtime_sample_count = 3;
+
             cycle_counter = 0;
+            sample_done_counter = 0;
             conv_tile_counter = 0;
             dwconv_tile_counter = 0;
             pwconv_tile_counter = 0;
@@ -380,10 +381,15 @@ module cnn_tb #(
             fc_tile_counter = 0;
             sigmoid_tile_counter = 0;
 
-            conv_seen_first_tile = 1'b0;
-            dwconv_seen_first_tile = 1'b0;
-            pwconv_seen_first_tile = 1'b0;
-            maxpool_seen_first_tile = 1'b0;
+            conv_frame_token_count = 0;
+            dwconv_frame_token_count = 0;
+            pwconv_frame_token_count = 0;
+            maxpool_frame_token_count = 0;
+
+            conv_in_frame = 1'b0;
+            dwconv_in_frame = 1'b0;
+            pwconv_in_frame = 1'b0;
+            maxpool_in_frame = 1'b0;
             conv_stream_gap_error = 1'b0;
             dwconv_stream_gap_error = 1'b0;
             pwconv_stream_gap_error = 1'b0;
@@ -396,14 +402,14 @@ module cnn_tb #(
         begin
             prep_dir = "";
             wave_file_path = "";
-            timeout_cycles = 4000;
-            runtime_wave_enable = ENABLE_WAVE;
 
             if (!$value$plusargs("PREP_DIR=%s", prep_dir)) begin
                 $display("TB_ERROR missing +PREP_DIR");
                 $finish_and_return(2);
             end
             if ($value$plusargs("TIMEOUT_CYCLES=%d", timeout_cycles)) begin
+            end
+            if ($value$plusargs("SAMPLE_COUNT=%d", runtime_sample_count)) begin
             end
             if ($test$plusargs("WAVE")) begin
                 runtime_wave_enable = 1;
@@ -424,6 +430,16 @@ module cnn_tb #(
             fc_weight_mem_path     = $sformatf("%0s/fc_weights/weight_words.mem", prep_dir);
             fc_bias_mem_path       = $sformatf("%0s/fc_bias/bias_words.mem", prep_dir);
             sigmoid_lut_mem_path   = $sformatf("%0s/sigmoid_lut/lut_words.mem", prep_dir);
+        end
+    endtask
+
+    // 在循环等待场景下统一做超时保护。
+    task automatic check_timeout;
+        begin
+            if (cycle_counter > timeout_cycles) begin
+                $display("TB_ERROR timeout cycles=%0d", cycle_counter);
+                $finish_and_return(3);
+            end
         end
     endtask
 
@@ -576,44 +592,59 @@ module cnn_tb #(
         end
     endtask
 
-    // 把当前样本的 30 行输入图完整写入单帧 SRAM。
-    task automatic load_input_sample;
-        reg [79:0] row_word;
+    // 只有在 DUT 明确允许时，才开始写下一帧输入。
+    task automatic wait_img_wr_ready;
+        begin
+            while (!img_wr_ready) begin
+                @(posedge clk);
+                check_timeout();
+            end
+        end
+    endtask
+
+    // 连续写入 30 行输入图，随后用 img_wr_commit 提交整帧。
+    task automatic load_input_sample_and_commit(input integer sample_id);
         begin
             for (row_idx = 0; row_idx < INPUT_ROW_COUNT; row_idx = row_idx + 1) begin
-                row_word = input_rows_mem[row_idx];
                 @(posedge clk);
                 img_wr_en <= 1'b1;
                 img_wr_addr <= row_idx[4:0];
-                img_wr_row_word <= row_word;
+                img_wr_row_word <= input_rows_mem[row_idx];
             end
+
             @(posedge clk);
             img_wr_en <= 1'b0;
             img_wr_addr <= 5'd0;
             img_wr_row_word <= 80'd0;
+
+            @(posedge clk);
+            img_wr_commit <= 1'b1;
+
+            @(posedge clk);
+            img_wr_commit <= 1'b0;
+
+            @(posedge clk);
+            $display("INPUT_COMMIT sample=%0d cycle=%0d", sample_id, cycle_counter);
         end
     endtask
 
-    // 拉高 start 一个时钟周期，启动一次新图计算。
+    // 首帧通过 start 让顶层进入连续运行模式。
     task automatic start_run;
         begin
             @(posedge clk);
             start <= 1'b1;
             @(posedge clk);
             start <= 1'b0;
-            $display("Run started at cycle=%0d", cycle_counter);
+            $display("RUN_ENABLE cycle=%0d", cycle_counter);
         end
     endtask
 
-    // 等待 DUT 完成，或者在超时后报错退出。
-    task automatic wait_done_or_timeout;
+    // 等待所有重复输入样本都得到最终 done。
+    task automatic wait_samples_done_or_timeout(input integer expected_done_count);
         begin
-            while (!done) begin
+            while (sample_done_counter < expected_done_count) begin
                 @(posedge clk);
-                if (cycle_counter > timeout_cycles) begin
-                    $display("TB_ERROR timeout cycles=%0d", cycle_counter);
-                    $finish_and_return(3);
-                end
+                check_timeout();
             end
             @(posedge clk);
         end
@@ -628,18 +659,37 @@ module cnn_tb #(
         end
     end
 
+    // 统计整网输出完成次数，每个 done 对应一帧推理完成。
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            sample_done_counter <= 0;
+        end else if (done) begin
+            $display("SAMPLE_DONE sample=%0d cycles=%0d", sample_done_counter, cycle_counter);
+            sample_done_counter <= sample_done_counter + 1;
+        end
+    end
+
     // Conv 输出统计与断流检测。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             conv_tile_counter <= 0;
-            conv_seen_first_tile <= 1'b0;
+            conv_frame_token_count <= 0;
+            conv_in_frame <= 1'b0;
             conv_stream_gap_error <= 1'b0;
         end else begin
             if (conv_out_stream_valid) begin
                 conv_tile_counter <= conv_tile_counter + 1;
-                conv_seen_first_tile <= 1'b1;
+                conv_frame_token_count <= conv_frame_token_count + 1;
+                conv_in_frame <= 1'b1;
                 $display("Conv-Out-Stream: pos=%0d group=%0d data=%0128x", conv_out_stream_pos, conv_out_stream_group, conv_out_stream_data);
-            end else if (conv_seen_first_tile && (conv_tile_counter < TOKEN_COUNT)) begin
+                if (conv_out_stream_last) begin
+                    if ((conv_frame_token_count + 1) != TOKEN_COUNT) begin
+                        conv_stream_gap_error <= 1'b1;
+                    end
+                    conv_frame_token_count <= 0;
+                    conv_in_frame <= 1'b0;
+                end
+            end else if (conv_in_frame) begin
                 conv_stream_gap_error <= 1'b1;
             end
         end
@@ -649,14 +699,23 @@ module cnn_tb #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             dwconv_tile_counter <= 0;
-            dwconv_seen_first_tile <= 1'b0;
+            dwconv_frame_token_count <= 0;
+            dwconv_in_frame <= 1'b0;
             dwconv_stream_gap_error <= 1'b0;
         end else begin
             if (dwconv_out_stream_valid) begin
                 dwconv_tile_counter <= dwconv_tile_counter + 1;
-                dwconv_seen_first_tile <= 1'b1;
+                dwconv_frame_token_count <= dwconv_frame_token_count + 1;
+                dwconv_in_frame <= 1'b1;
                 $display("DWConv-Out-Stream: pos=%0d group=%0d data=%032x", dwconv_out_stream_pos, dwconv_out_stream_group, dwconv_out_stream_data);
-            end else if (dwconv_seen_first_tile && (dwconv_tile_counter < TOKEN_COUNT)) begin
+                if (dwconv_out_stream_last) begin
+                    if ((dwconv_frame_token_count + 1) != TOKEN_COUNT) begin
+                        dwconv_stream_gap_error <= 1'b1;
+                    end
+                    dwconv_frame_token_count <= 0;
+                    dwconv_in_frame <= 1'b0;
+                end
+            end else if (dwconv_in_frame) begin
                 dwconv_stream_gap_error <= 1'b1;
             end
         end
@@ -666,14 +725,23 @@ module cnn_tb #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             pwconv_tile_counter <= 0;
-            pwconv_seen_first_tile <= 1'b0;
+            pwconv_frame_token_count <= 0;
+            pwconv_in_frame <= 1'b0;
             pwconv_stream_gap_error <= 1'b0;
         end else begin
             if (pwconv_out_stream_valid) begin
                 pwconv_tile_counter <= pwconv_tile_counter + 1;
-                pwconv_seen_first_tile <= 1'b1;
+                pwconv_frame_token_count <= pwconv_frame_token_count + 1;
+                pwconv_in_frame <= 1'b1;
                 $display("PWConv-Out-Stream: pos=%0d group=%0d data=%032x", pwconv_out_stream_pos, pwconv_out_stream_group, pwconv_out_stream_data);
-            end else if (pwconv_seen_first_tile && (pwconv_tile_counter < TOKEN_COUNT)) begin
+                if (pwconv_out_stream_last) begin
+                    if ((pwconv_frame_token_count + 1) != TOKEN_COUNT) begin
+                        pwconv_stream_gap_error <= 1'b1;
+                    end
+                    pwconv_frame_token_count <= 0;
+                    pwconv_in_frame <= 1'b0;
+                end
+            end else if (pwconv_in_frame) begin
                 pwconv_stream_gap_error <= 1'b1;
             end
         end
@@ -683,14 +751,23 @@ module cnn_tb #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             maxpool_tile_counter <= 0;
-            maxpool_seen_first_tile <= 1'b0;
+            maxpool_frame_token_count <= 0;
+            maxpool_in_frame <= 1'b0;
             maxpool_stream_gap_error <= 1'b0;
         end else begin
             if (maxpool_out_stream_valid) begin
                 maxpool_tile_counter <= maxpool_tile_counter + 1;
-                maxpool_seen_first_tile <= 1'b1;
+                maxpool_frame_token_count <= maxpool_frame_token_count + 1;
+                maxpool_in_frame <= 1'b1;
                 $display("Maxpool-Out-Stream: pos=%0d group=%0d data=%08x", maxpool_out_stream_pos, maxpool_out_stream_group, maxpool_out_stream_data);
-            end else if (maxpool_seen_first_tile && (maxpool_tile_counter < TOKEN_COUNT)) begin
+                if (maxpool_out_stream_last) begin
+                    if ((maxpool_frame_token_count + 1) != TOKEN_COUNT) begin
+                        maxpool_stream_gap_error <= 1'b1;
+                    end
+                    maxpool_frame_token_count <= 0;
+                    maxpool_in_frame <= 1'b0;
+                end
+            end else if (maxpool_in_frame) begin
                 maxpool_stream_gap_error <= 1'b1;
             end
         end
@@ -700,11 +777,9 @@ module cnn_tb #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             fc_tile_counter <= 0;
-        end else begin
-            if (fc_out_stream_valid) begin
-                fc_tile_counter <= fc_tile_counter + 1;
-                $display("FC-Out-Stream: data=%04x", fc_out_stream_data);
-            end
+        end else if (fc_out_stream_valid) begin
+            fc_tile_counter <= fc_tile_counter + 1;
+            $display("FC-Out-Stream: data=%04x", fc_out_stream_data);
         end
     end
 
@@ -712,22 +787,17 @@ module cnn_tb #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             sigmoid_tile_counter <= 0;
-        end else begin
-            if (sigmoid_out_stream_valid) begin
-                sigmoid_tile_counter <= sigmoid_tile_counter + 1;
-                $display("Sigmoid-Out-Stream: data=%016x", sigmoid_out_stream_data);
-            end
+        end else if (sigmoid_out_stream_valid) begin
+            sigmoid_tile_counter <= sigmoid_tile_counter + 1;
+            $display("Sigmoid-Out-Stream: data=%016x", sigmoid_out_stream_data);
         end
     end
 
     // 主测试流程：
-    // 1. 解析仿真 plusargs
-    // 2. 从 mem 文件加载样本
-    // 3. 复位 DUT
-    // 4. 装载权重 / 偏置 / LUT / 输入图
-    // 5. 启动计算
-    // 6. 等待完成
-    // 7. 检查 tile 数和 stream gap
+    // - 初始化与读入数据
+    // - 依次写参数
+    // - 连续提交多帧输入
+    // - 等待全部帧完成并做基本自检
     initial begin
         init_signals();
         parse_plusargs();
@@ -742,37 +812,39 @@ module cnn_tb #(
         load_weights();
         load_bias();
         load_sigmoid_lut();
-        load_input_sample();
-        start_run();
-        wait_done_or_timeout();
 
-        if (conv_tile_counter !== TOKEN_COUNT) begin
-            $display("TB_ERROR conv_tile_count got=%0d expected=%0d", conv_tile_counter, TOKEN_COUNT);
-            $finish_and_return(4);
+        for (sample_idx = 0; sample_idx < runtime_sample_count; sample_idx = sample_idx + 1) begin
+            wait_img_wr_ready();
+            load_input_sample_and_commit(sample_idx);
+            if (sample_idx == 0) begin
+                start_run();
+            end
         end
 
-        if (dwconv_tile_counter !== TOKEN_COUNT) begin
-            $display("TB_ERROR dwconv_tile_count got=%0d expected=%0d", dwconv_tile_counter, TOKEN_COUNT);
+        wait_samples_done_or_timeout(runtime_sample_count);
+
+        if (conv_tile_counter !== (runtime_sample_count * TOKEN_COUNT)) begin
+            $display("TB_ERROR conv_tile_count got=%0d expected=%0d", conv_tile_counter, runtime_sample_count * TOKEN_COUNT);
             $finish_and_return(4);
         end
-
-        if (pwconv_tile_counter !== TOKEN_COUNT) begin
-            $display("TB_ERROR pwconv_tile_count got=%0d expected=%0d", pwconv_tile_counter, TOKEN_COUNT);
+        if (dwconv_tile_counter !== (runtime_sample_count * TOKEN_COUNT)) begin
+            $display("TB_ERROR dwconv_tile_count got=%0d expected=%0d", dwconv_tile_counter, runtime_sample_count * TOKEN_COUNT);
             $finish_and_return(4);
         end
-
-        if (maxpool_tile_counter !== TOKEN_COUNT) begin
-            $display("TB_ERROR maxpool_tile_count got=%0d expected=%0d", maxpool_tile_counter, TOKEN_COUNT);
+        if (pwconv_tile_counter !== (runtime_sample_count * TOKEN_COUNT)) begin
+            $display("TB_ERROR pwconv_tile_count got=%0d expected=%0d", pwconv_tile_counter, runtime_sample_count * TOKEN_COUNT);
             $finish_and_return(4);
         end
-
-        if (fc_tile_counter !== 1) begin
-            $display("TB_ERROR fc_tile_count got=%0d expected=1", fc_tile_counter);
+        if (maxpool_tile_counter !== (runtime_sample_count * TOKEN_COUNT)) begin
+            $display("TB_ERROR maxpool_tile_count got=%0d expected=%0d", maxpool_tile_counter, runtime_sample_count * TOKEN_COUNT);
             $finish_and_return(4);
         end
-
-        if (sigmoid_tile_counter !== 1) begin
-            $display("TB_ERROR sigmoid_tile_count got=%0d expected=1", sigmoid_tile_counter);
+        if (fc_tile_counter !== runtime_sample_count) begin
+            $display("TB_ERROR fc_tile_count got=%0d expected=%0d", fc_tile_counter, runtime_sample_count);
+            $finish_and_return(4);
+        end
+        if (sigmoid_tile_counter !== runtime_sample_count) begin
+            $display("TB_ERROR sigmoid_tile_count got=%0d expected=%0d", sigmoid_tile_counter, runtime_sample_count);
             $finish_and_return(4);
         end
 
@@ -787,7 +859,7 @@ module cnn_tb #(
             $finish_and_return(5);
         end
 
-        $display("SAMPLE_DONE cycles=%0d", cycle_counter);
+        $display("TB_PASS samples=%0d cycles=%0d", runtime_sample_count, cycle_counter);
         $finish_and_return(0);
     end
 

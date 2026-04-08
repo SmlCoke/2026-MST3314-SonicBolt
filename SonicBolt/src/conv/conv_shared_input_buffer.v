@@ -2,7 +2,7 @@
 /*
  * 模块名称: conv_shared_input_buffer
  * 作者: SonicBolt 团队
- * 日期: 2026-04-07
+ * 日期: 2026-04-08
  * 版本: v2.3
  *
  * 功能概述:
@@ -41,7 +41,7 @@ module conv_shared_input_buffer (
     input  wire [4:0]    img_wr_addr,      // 写入行地址，输入图共 30 行，因此 5bit 足够表示 0~29
     input  wire [79:0]   img_wr_row_word,  // 一行 10 个像素，10 x 8bit = 80bit
     input  wire          img_wr_commit,    // 表示当前写入 Bank 的30行已经写完，可以被消费
-    output wire          img_wr_ready      // 输出给外部，表示当前存在可写 bank    
+    output wire          img_wr_ready,     // 输出给外部，表示当前存在可写 bank    
 
     // ---------- 消费启动接口 ----------
     input  wire          start_consume,    // 启动消费当前 SRAM 中的一张新图，并清空上一轮工作集状态
@@ -60,7 +60,8 @@ module conv_shared_input_buffer (
     localparam integer WORKSET_ROWS = 14;
 
     reg         write_bank;        // 控制当前写入的 bank，0 = ping, 1 = pong
-    reg         active_bank;       // 当前处于消费状态的工作 bank
+    reg         active_bank;       // 当前处于消费状态的工作 bank, 是哪个完全取决于当前顶层系统的选择
+    reg         write_inflight;    // 当前是否处于一张图的连续写入会话中
 
     // shadow_cache 只镜像输入图前 14 行。
     // 1. start 之后请求 pos=0 时，不需要先从 SRAM 连续读 14 拍才能开算。
@@ -84,17 +85,61 @@ module conv_shared_input_buffer (
     wire [79:0] frame_rdata_ping;   // Ping SRAM 的同步读返回
     wire [79:0] frame_rdata_pong;   // Pong SRAM 的同步读返回
     wire [79:0] frame_rdata;        // 当前处于消费状态的 SRAM 的读总线
+
+    wire        frame_wr_en_ping;   // Ping SRAM 写使能
+    wire        frame_wr_en_pong;   // Pong SRAM 写使能
+
+    wire        frame_rd_en_ping;   // Ping SRAM 读使能
+    wire        frame_rd_en_pong;   // Pong SRAM 读使能
+
     wire        frame_en_ping;      // Ping SRAM 总使能，写输入或发起预取时拉高
     wire        frame_en_pong;      // Pong SRAM 总使能，写输入或发起预取时拉高
-    wire [4:0]  frame_addr;         // SRAM 地址，写入和预取共用同一个地址口
+
+    wire [4:0]  frame_addr_ping;    // Ping SRAM 地址
+    wire [4:0]  frame_addr_pong;    // Pong SRAM 地址
+
+    wire        selected_write_bank;// 本拍实际写入选择的 bank
+    wire        start_write_session;// 一张新图写入会话的起点
+    wire        write_data_fire;    // 这一拍的输入写数据是否真的应该被 buffer 接收并写入 SRAM
 
     integer idx;
 
-    assign frame_addr      = img_wr_en ? img_wr_addr : frame_rd_addr_reg;
+    // 允许写入的两个情况：
+    // (1) 当前已经处于一张图的连续写入会话中
+    // (2) 当前不在写入流中，且 non-active bank 还没有装好一张“待消费”的完整输入图
+    assign img_wr_ready         = write_inflight || !ready_bank_mask[~active_bank];
+    // 写入 bank 选择逻辑：
+    // (1) 如果已经在写一张图，则后续各行必须继续写同一个 write_bank
+    // (2) 如果当前没在写，则新图的第一行默认落到 non-active bank
+    assign selected_write_bank  = write_inflight ? write_bank : ~active_bank;
+    // 新图写入起点：当前拍是 addr=0，且当前不在写入流中，并且输入端允许开启一张新图的写入
+    assign start_write_session  = img_wr_en && !write_inflight && (img_wr_addr == 5'd0) && img_wr_ready;
+    
 
-    // Ping-Pong SRAM 的使能信号：(1) 写, 且写入本 bank (2) 读, 其读出本 bank
-    assign frame_en_ping   = (img_wr_en && ~write_bank) || (frame_rd_en_reg && ~active_bank);
-    assign frame_en_pong   = (img_wr_en &&  write_bank) || (frame_rd_en_reg &&  active_bank);
+    // 这一拍的输入写数据是否真的应该被 buffer 接收并写入 SRAM
+    // 两种情况: 
+    // (1) 当前拍要么已经处于一张图的连续写入过程中
+    // (2) 要么这一拍就是一张新图写入的起点
+    // 该信号是写使能信号的本质，可以避免外部乱写
+    assign write_data_fire      = img_wr_en && (write_inflight || start_write_session);
+
+    // SRAM 写使能信号: 应该写并且选中当前 bank
+    assign frame_wr_en_ping = write_data_fire && ~selected_write_bank;
+
+    // SRAM 写使能信号: 应该写并且选中当前 bank
+    assign frame_wr_en_pong = write_data_fire &&  selected_write_bank;
+
+    // SRAM 读使能信号: 应该读并且当前 Bank 就是 active bank
+    assign frame_rd_en_ping = frame_rd_en_reg && ~active_bank;
+    assign frame_rd_en_pong = frame_rd_en_reg &&  active_bank;
+
+    // Ping-Pong SRAM 的使能信号：(1) 写, 且写入本 bank (2) 读, 且读取当前 active bank
+    assign frame_en_ping    = frame_wr_en_ping || frame_rd_en_ping;
+    assign frame_en_pong    = frame_wr_en_pong || frame_rd_en_pong;
+
+    // SRAM 地址信号: 写地址来自外部输入，读地址来自内部状态机
+    assign frame_addr_ping  = frame_wr_en_ping ? img_wr_addr : frame_rd_addr_reg;
+    assign frame_addr_pong  = frame_wr_en_pong ? img_wr_addr : frame_rd_addr_reg;
 
     // 根据当前活动的 Bank 筛选读出总线
     assign frame_rdata     = (active_bank == 1'b0) ? frame_rdata_ping : frame_rdata_pong;
@@ -104,8 +149,8 @@ module conv_shared_input_buffer (
     S018V3EBCDSP_X8Y4D80_PR u_frame_store_ping (
         .CLK(clk),
         .CEN(~frame_en_ping),
-        .WEN(~img_wr_en),
-        .A(frame_addr),
+        .WEN(~frame_wr_en_ping),
+        .A(frame_addr_ping),
         .D(img_wr_row_word),
         .Q(frame_rdata_ping)
     );
@@ -113,8 +158,8 @@ module conv_shared_input_buffer (
     S018V3EBCDSP_X8Y4D80_PR u_frame_store_pong (
         .CLK(clk),
         .CEN(~frame_en_pong),
-        .WEN(~img_wr_en),
-        .A(frame_addr),
+        .WEN(~frame_wr_en_pong),
+        .A(frame_addr_pong),
         .D(img_wr_row_word),
         .Q(frame_rdata_pong)
     );
@@ -132,16 +177,20 @@ module conv_shared_input_buffer (
             rd_capture_slot    <= 1'b0;
             frame_rd_en_reg    <= 1'b0;
             frame_rd_addr_reg  <= 5'd0;
+            ready_bank_mask    <= 2'b00;
             for (idx = 0; idx < WORKSET_ROWS; idx = idx + 1) begin
-                shadow_cache[idx] <= 80'd0;
+                shadow_cache_ping[idx] <= 80'd0;
+                shadow_cache_pong[idx] <= 80'd0;
                 pos_window_data[idx*ROW_WORD_W +: ROW_WORD_W] <= 80'd0;
             end
             prefetched_rows[0] <= 80'd0;
             prefetched_rows[1] <= 80'd0;
 
-            // 复位后活动bank和写bank默认指向 ping
+            // 复位后将 active_bank 置为 pong，
+            // 这样第一张新图开始写入时会默认落到 ping bank
             write_bank         <= 1'b0;
-            active_bank         <= 1'b0;
+            active_bank        <= 1'b1;
+            write_inflight     <= 1'b0;
         end else begin
             // 默认每拍把 SRAM 读使能拉低；
             // 只有进入预取发起分支时，才会把 active_rd_en_reg 拉高一个周期。
@@ -149,25 +198,32 @@ module conv_shared_input_buffer (
 
             // -----------------------------------------------------------------
             // Ping-Pong 状态更新逻辑
-
+            // (1) 新图写会话启动时更新 write_bank 为非活动 bank（这个时候non-active bank一定可用）, 同时置高写入流信号
+            // (2) 一张图写完并且写入流信号有效(防止外部乱发信号)时, 把当前 write_bank 标记为“待消费 ready”，同时更新 write_bank 并且关闭写入流信号
             // -----------------------------------------------------------------
-            if (img_wr_commit) begin
-                write_bank <= ~write_bank;
-                ready_bank_mask[write_bank] = 1'b1;
+            if (start_write_session) begin
+                write_bank     <= ~active_bank;
+                write_inflight <= 1'b1;
             end
+
+            if (img_wr_commit && write_inflight) begin
+                ready_bank_mask[write_bank] <= 1'b1;
+                write_inflight <= 1'b0;
+                write_bank <= ~write_bank;
+            end
+
             // -----------------------------------------------------------------
             // 写入路径：
             // 外部总是按“整行”写 SRAM。
             // 另外，如果写入的是前 14 行，就顺便更新 shadow cache，
             // 让未来的 pos=0 能直接从寄存器快照中拿到首个工作集。
             // -----------------------------------------------------------------
-            if (img_wr_en && (img_wr_addr < 5'd14)) begin
-                if (write_bank == 1'b0) begin
+            if (write_data_fire && (img_wr_addr < 5'd14)) begin
+                if (selected_write_bank == 1'b0) begin
                     shadow_cache_ping[img_wr_addr] <= img_wr_row_word;
                 end else begin 
                     shadow_cache_pong[img_wr_addr] <= img_wr_row_word;
                 end
-                    
             end
 
             // -----------------------------------------------------------------
@@ -177,6 +233,10 @@ module conv_shared_input_buffer (
             // 明确请求 pos=0。这样输入 buffer 仍然保持“被请求才提供数据”的接口语义。
             // -----------------------------------------------------------------
             if (start_consume) begin
+                // 当前 active bank 完全取决于顶层系统的选择
+                active_bank        <= consume_bank_sel;
+                // 当前 bank 已被选中进入消费流，不再属于“待启动消费”的 ready bank
+                ready_bank_mask[consume_bank_sel] <= 1'b0;
                 pos_window_valid   <= 1'b0;
                 current_pos        <= 4'd0;
                 workset_loaded     <= 1'b0;
