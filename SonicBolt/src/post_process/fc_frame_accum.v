@@ -2,8 +2,8 @@
 /*
  * 模块名称: fc_frame_accum
  * 作者: SonicBolt 团队
- * 日期: 2026-04-06
- * 版本: v1.1
+ * 日期: 2026-04-09
+ * 版本: v1.2
  *
  * 功能概述:
  *   - 维护 FC 帧级累加状态，也就是不同周期到达的 token 增量累加。
@@ -17,6 +17,7 @@
  * 版本定位:
  *   - v1.0 完成基本功能实现
  *   - v1.1 优化了时序逻辑，删除了部分冗余逻辑，同时回复 fire 信号作为启动信号的功能地位
+ *   - v1.2 将杂糅的状态转移逻辑重构为有限状态机
  */
 module fc_frame_accum (
     input  wire               clk,
@@ -40,6 +41,12 @@ module fc_frame_accum (
     output reg  signed [31:0] out_sum_cls0,
     output reg  signed [31:0] out_sum_cls1
 );
+    // 状态机状态列表
+    parameter IDLE  = 2'b00;
+    parameter BUSY  = 2'b01;
+    parameter DONE  = 2'b10;
+    reg  [1:0] current_state;
+    reg  [1:0] next_state;
 
     reg               frame_busy;          // 模块状态
     reg               out_valid_reg;  // 输出有效寄存器，保持一拍
@@ -75,10 +82,48 @@ module fc_frame_accum (
     // assign out_fire  = in_valid && in_last;
     assign out_valid = out_valid_reg;
 
+    // 三段式状态机第一段：状态更新逻辑
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            current_state <= IDLE;
+        end else begin
+            current_state <= next_state;
+        end
+    end
+
+    // 三段式状态机第二段：下一个状态计算逻辑
+    always @(*) begin
+        next_state = current_state; // 默认保持当前状态
+        case (current_state)
+            IDLE: begin
+                if (frame_start) begin
+                    next_state = BUSY;
+                end else begin
+                    next_state = IDLE;
+                end
+            end
+
+            BUSY: begin
+                if (in_valid && in_last) begin
+                    next_state = DONE;
+                end else begin
+                    next_state = BUSY;
+                end
+                 
+            end
+
+            DONE: begin
+                next_state = IDLE;
+            end
+        endcase
+
+    end
+
+    // 三段式状态机第三段：输出逻辑
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             frame_busy         <= 1'b0;
-            out_valid_reg <= 1'b0;
+            out_valid_reg      <= 1'b0;
             accum_cls0         <= 32'sd0;
             accum_cls1         <= 32'sd0;
             out_sum_cls0       <= 32'sd0;
@@ -86,29 +131,41 @@ module fc_frame_accum (
         end else begin
             // emit_valid 只保持一拍，数据由寄存器稳定输出。
             out_valid_reg <= 1'b0;
-
-            // 本质就是 fire 信号，只在帧首装载一次 bias，避免 fire 连续为高时反复覆盖累加状态。
-            if (frame_start) begin
-                frame_busy <= 1'b1;
-                accum_cls0 <= bias_cls0_32;
-                accum_cls1 <= bias_cls1_32;
-            end
-
-            if (in_valid) begin
-                if (in_last) begin
-                    // 最后一拍把最终结果打到寄存器，下一拍再对外声明结果有效。
-                    frame_busy         <= 1'b0;
-                    out_valid_reg <= 1'b1;
-                    accum_cls0         <= 32'sd0;
-                    accum_cls1         <= 32'sd0;
-                    out_sum_cls0       <= sum_next_cls0;
-                    out_sum_cls1       <= sum_next_cls1;
-                end else begin
-                    frame_busy <= 1'b1;
-                    accum_cls0 <= sum_next_cls0;
-                    accum_cls1 <= sum_next_cls1;
+            case (current_state)
+                IDLE: begin
+                    // 本质就是 fire 信号，只在帧首装载一次 bias，避免 fire 连续为高时反复覆盖累加状态。
+                    if (frame_start) begin
+                        frame_busy <= 1'b1;
+                        accum_cls0 <= bias_cls0_32;
+                        accum_cls1 <= bias_cls1_32;
+                    end
                 end
-            end
+
+                BUSY: begin
+                    if (in_valid) begin
+                        if (in_last) begin
+                            // 最后一拍把最终结果打到寄存器，供下一拍外部采样。
+                            frame_busy         <= 1'b0;
+                            out_valid_reg      <= 1'b1;
+                            accum_cls0         <= 32'sd0;
+                            accum_cls1         <= 32'sd0;
+                            out_sum_cls0       <= sum_next_cls0;
+                            out_sum_cls1       <= sum_next_cls1;
+                        end else begin
+                            frame_busy <= 1'b1;
+                            accum_cls0 <= sum_next_cls0;
+                            accum_cls1 <= sum_next_cls1;
+                        end
+                    end
+                end
+
+                DONE: begin
+                    frame_busy <= 1'b0;
+                end
+                default: begin
+                    frame_busy <= 1'b0;
+                end
+            endcase
         end
     end
 

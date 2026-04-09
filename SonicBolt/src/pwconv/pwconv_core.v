@@ -2,8 +2,8 @@
 /*
  * 模块名称: pwconv_core
  * 作者: SonicBolt 团队
- * 日期: 2026-04-08
- * 版本: v1.2
+ * 日期: 2026-04-09
+ * 版本: v1.3
  *
  * 功能概述:
  *   PWConv 的输入接收、token 调度、参数读取和计算核心拼接。
@@ -28,6 +28,7 @@
  * 版本定位:
  *   - v1.1 修复 fire 信号
  *   - v1.2 增加 launch_safe 输出信号，暴露给顶层用于启动下一轮 conv 计算
+ *   - v1.3 将杂糅的状态转移逻辑重构为有限状态机
  */
 module pwconv_core #(
     parameter integer M0      = 69,
@@ -224,6 +225,9 @@ module pwconv_core #(
                             issue_group <= 3'd0;
                             issue_pos   <= issue_pos + 4'd1;
                         end else begin
+                            // 上一个时钟上升沿，recv 刚刚填满 8 个 tile 的数据，当前时钟上升沿，issue_group 必须变为 1 ，因为下一个时钟上升沿必须读出 addr = 1的权重；
+                            // 而当前时钟上升沿，SRAM 正在读取 addr = 0 的数据，
+                            // 因为 recv 变为7，issue_group 也变为 7 （如果是第一组 8 tile 已经读满了，这是在读第二组），recv 变为 8 的那个时钟周期，issue_group 变为 0！下一个时钟周期就会送出 addr = 0 的权重 
                             issue_group <= issue_group + 3'd1;
                         end
                     end
