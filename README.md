@@ -166,6 +166,7 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 当前**已实现完整功能版本**：
 - CNN-v1.0: SonicBolt v5.1，全链路基础实现，包含所有功能，并且通过功能仿真验证
 - CNN-v1.1: SonicBolt v5.2，新增**输入 Ping-Pong 缓存机制**，实现流水线连续计算
+- CNN-v1.2: SonicBolt v5.3，将杂糅的状态转移逻辑重构为有限状态机写法，提升代码可读性和可维护性。
 
 ---
 
