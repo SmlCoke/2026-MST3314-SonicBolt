@@ -75,7 +75,7 @@ module fc #(
 
     wire [63:0] stage0_data_bus;
 
-    reg         stage1_valid;
+    wire        stage1_valid;
     wire [63:0] stage1_rescale_bus;
     wire        stage2_valid;
     wire [15:0] stage2_data_bus;

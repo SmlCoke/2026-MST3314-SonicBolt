@@ -35,6 +35,7 @@ MiniCNN/src
 *simv*
 *dbg*
 *.vvp*
+*.report*
 
 # 预处理数据
 prepared_conv_test/

@@ -124,16 +124,20 @@ def compile_testbench(tb_top: str, tb_file: Path, result_dir: Path) -> Path:
     vvp_path = result_dir / f"{tb_top}.vvp"
     compile_log = result_dir / "compile.log"
     compile_err = result_dir / "compile_stderr.log"
+    filelist_path = result_dir / "compile_filelist.f"
 
-    source_files = sorted(str(path) for path in CONV_DIR.glob("*.v"))
-    source_files += sorted(str(path) for path in DWCONV_DIR.glob("*.v"))
-    source_files += sorted(str(path) for path in PWCONV_DIR.glob("*.v"))
-    source_files += sorted(str(path) for path in POST_PROCESS_DIR.glob("*.v"))
-    source_files += sorted(str(path) for path in UTILS_DIR.glob("*.v"))
-    source_files.append(str(SRC_DIR / "cnn.v"))
-    source_files.append(str(tb_file))
+    source_paths = sorted(path.resolve() for path in CONV_DIR.glob("*.v"))
+    source_paths += sorted(path.resolve() for path in DWCONV_DIR.glob("*.v"))
+    source_paths += sorted(path.resolve() for path in PWCONV_DIR.glob("*.v"))
+    source_paths += sorted(path.resolve() for path in POST_PROCESS_DIR.glob("*.v"))
+    source_paths += sorted(path.resolve() for path in UTILS_DIR.glob("*.v"))
+    source_paths.append((SRC_DIR / "cnn.v").resolve())
+    source_paths.append(tb_file.resolve())
 
-    cmd = ["iverilog", "-g2012", "-s", tb_top, "-o", str(vvp_path), *source_files]
+    # Use filelist mode to avoid long-argument instability on Windows.
+    source_files = [path.as_posix() for path in source_paths]
+    filelist_path.write_text("\n".join(source_files) + "\n", encoding="utf-8")
+    cmd = ["iverilog", "-g2012", "-f", str(filelist_path), "-s", tb_top, "-o", str(vvp_path)]
     result = run_cmd(cmd, cwd=ROOT_DIR, stdout_path=compile_log, stderr_path=compile_err)
     if result.returncode != 0:
         raise RuntimeError(f"iverilog compile failed, check {compile_log} / {compile_err}")
