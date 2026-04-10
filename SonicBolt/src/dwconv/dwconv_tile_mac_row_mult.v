@@ -2,8 +2,8 @@
 /*
  * 模块名称: dwconv_tile_mac_row_mult
  * 作者: SonicBolt 团队
- * 日期: 2026-03-29
- * 版本: v1.0
+ * 日期: 2026-04-10
+ * 版本: v1.1
  *
  * 功能概述:
  *   计算某一条预切分 kernel_row 对应的 3 项行内卷积和。
@@ -24,6 +24,7 @@
  *   - 权重也已经在外部预切分为当前 kernel_row 的 96bit 行权重。
  * 
  * 版本定位:
+ *  
  */
 module dwconv_tile_mac_row_mult (
     input  wire                clk,             // 时钟
@@ -51,22 +52,45 @@ module dwconv_tile_mac_row_mult (
         end
     end
 
-    // ---------- 用打拍后的寄存器参与乘加 ----------
+    // ---------- 用打拍后的寄存器参与乘加（纯结构化展开） ----------
+    wire signed [17:0] row_sum_wire [0:3][0:1][0:1];
+
+    genvar g_ch;
+    genvar g_oy;
+    genvar g_ox;
+
+    generate
+        for (g_ch = 0; g_ch < 4; g_ch = g_ch + 1) begin : CH_LOOP
+            for (g_oy = 0; g_oy < 2; g_oy = g_oy + 1) begin : OY_LOOP
+                for (g_ox = 0; g_ox < 2; g_ox = g_ox + 1) begin : OX_LOOP
+                    // 乘法节点
+                    wire signed [15:0] p_0 = $signed(row_window_data_reg[(g_ch * 8 + g_oy * 4 + g_ox + 0) * 8 +: 8]) * 
+                                             $signed(weight_row_data_reg[(g_ch * 24) + (0 * 8) +: 8]);
+                    wire signed [15:0] p_1 = $signed(row_window_data_reg[(g_ch * 8 + g_oy * 4 + g_ox + 1) * 8 +: 8]) * 
+                                             $signed(weight_row_data_reg[(g_ch * 24) + (1 * 8) +: 8]);
+                    wire signed [15:0] p_2 = $signed(row_window_data_reg[(g_ch * 8 + g_oy * 4 + g_ox + 2) * 8 +: 8]) * 
+                                             $signed(weight_row_data_reg[(g_ch * 24) + (2 * 8) +: 8]);
+
+                    // 加法树级联
+                    wire signed [16:0] s_l1_0 = p_0 + p_1;
+                    
+                    // 结果连线
+                    assign row_sum_wire[g_ch][g_oy][g_ox] = s_l1_0 + p_2;
+                end
+            end
+        end
+    endgenerate
+
+    // ---------- 将组合逻辑结果打一拍输出 ----------
+    integer seq_ch, seq_oy, seq_ox;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             out_row_sum_bus <= {4*2*2*18{1'b0}};
         end else begin
-            for (ch_idx = 0; ch_idx < 4; ch_idx = ch_idx + 1) begin
-                for (oy_idx = 0; oy_idx < 2; oy_idx = oy_idx + 1) begin
-                    for (ox_idx = 0; ox_idx < 2; ox_idx = ox_idx + 1) begin
-                        // 地址计算公式
-                        // 输出填充：先按通道索引，每个通道4个结果；再按行索引，每行2个结果，一共2行，再按列索引。
-                        // 数据选择：当前输入数据行：oy_idx，对应数据：i + oy_idx
-                        // 权重选择：第 ch_idx 个通道。
-                        out_row_sum_bus[((ch_idx * 4 + oy_idx * 2 + ox_idx) * 18) +: 18] <=
-                            ($signed(row_window_data_reg[(ch_idx * 8 + oy_idx * 4 + ox_idx + 0) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 24) + (0 * 8) +: 8])) +
-                            ($signed(row_window_data_reg[(ch_idx * 8 + oy_idx * 4 + ox_idx + 1) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 24) + (1 * 8) +: 8])) +
-                            ($signed(row_window_data_reg[(ch_idx * 8 + oy_idx * 4 + ox_idx + 2) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 24) + (2 * 8) +: 8]));
+            for (seq_ch = 0; seq_ch < 4; seq_ch = seq_ch + 1) begin
+                for (seq_oy = 0; seq_oy < 2; seq_oy = seq_oy + 1) begin
+                    for (seq_ox = 0; seq_ox < 2; seq_ox = seq_ox + 1) begin
+                        out_row_sum_bus[((seq_ch * 4 + seq_oy * 2 + seq_ox) * 18) +: 18] <= row_sum_wire[seq_ch][seq_oy][seq_ox];
                     end
                 end
             end

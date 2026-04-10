@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_tile_mac_row_mult
  * 作者: SonicBolt 团队
- * 日期: 2026-03-24
- * 版本: v4.1
+ * 日期: 2026-04-10
+ * 版本: v4.2
  *
  * 功能概述:
  *   计算某一条预切分 kernel_row 对应的 7 项行内卷积和。
@@ -30,6 +30,7 @@
  *   - v3.0 认为不需要在计算时对每个输入都拓展位宽，只需要保证 <= 左边的输出位宽就行。
  *   - v4.0 分析得出，7组INT8的乘累加配合得到的最大位宽为 INT19，因此将输出位宽从 INT32 缩减到 INT19
  *   - v4.1 在内部增加了数据/权重的下沉流水级，与外部 Stage1 的元数据/偏置打拍匹配
+ *   - v4.2
  */
 module conv_tile_mac_row_mult (
     input  wire                clk,             // 时钟
@@ -60,6 +61,10 @@ module conv_tile_mac_row_mult (
     end
 
     // ---------- 用打拍后的寄存器参与乘加 ----------
+    reg signed [15:0] p_0, p_1, p_2, p_3, p_4, p_5, p_6;
+    reg signed [16:0] s_l1_0, s_l1_1, s_l1_2;
+    reg signed [17:0] s_l2_0, s_l2_1;
+
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             out_row_sum_bus <= {4*4*4*19{1'b0}};
@@ -67,25 +72,28 @@ module conv_tile_mac_row_mult (
             for (ch_idx = 0; ch_idx < 4; ch_idx = ch_idx + 1) begin
                 for (oy_idx = 0; oy_idx < 4; oy_idx = oy_idx + 1) begin
                     for (ox_idx = 0; ox_idx < 4; ox_idx = ox_idx + 1) begin
+                        // 1. 拆分乘法中间节点
+                        p_0 = $signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 0) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 56) + (0 * 8) +: 8]);
+                        p_1 = $signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 1) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 56) + (1 * 8) +: 8]);
+                        p_2 = $signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 2) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 56) + (2 * 8) +: 8]);
+                        p_3 = $signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 3) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 56) + (3 * 8) +: 8]);
+                        p_4 = $signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 4) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 56) + (4 * 8) +: 8]);
+                        p_5 = $signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 5) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 56) + (5 * 8) +: 8]);
+                        p_6 = $signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 6) * 8 +: 8]) * $signed(weight_row_data_reg[(ch_idx * 56) + (6 * 8) +: 8]);
+
+                        // 2. 加法树 L1 节点
+                        s_l1_0 = p_0 + p_1;
+                        s_l1_1 = p_2 + p_3;
+                        s_l1_2 = p_4 + p_5;
+
+                        // 3. 加法树 L2 节点
+                        s_l2_0 = s_l1_0 + s_l1_1;
+                        s_l2_1 = s_l1_2 + p_6;
+
                         // 地址计算公式
                         // 输出填充：先按通道索引，每个通道16个结果；再按行索引，每行4个结果，一共4行，再按列索引。
-                        // 数据选择：当前输入数据行：oy_idx，对应数据：i + oy_idx
-                        // 权重选择：第 ch_idx 个通道。
-                        out_row_sum_bus[((ch_idx * 16 + oy_idx * 4 + ox_idx) * 19) +: 19] <=
-                            ($signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 0) * 8 +: 8]) *
-                            $signed(weight_row_data_reg[(ch_idx * 56) + (0 * 8) +: 8])) +
-                            ($signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 1) * 8 +: 8]) *
-                            $signed(weight_row_data_reg[(ch_idx * 56) + (1 * 8) +: 8])) +
-                            ($signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 2) * 8 +: 8]) *
-                            $signed(weight_row_data_reg[(ch_idx * 56) + (2 * 8) +: 8])) +
-                            ($signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 3) * 8 +: 8]) *
-                            $signed(weight_row_data_reg[(ch_idx * 56) + (3 * 8) +: 8])) +
-                            ($signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 4) * 8 +: 8]) *
-                            $signed(weight_row_data_reg[(ch_idx * 56) + (4 * 8) +: 8])) +
-                            ($signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 5) * 8 +: 8]) *
-                            $signed(weight_row_data_reg[(ch_idx * 56) + (5 * 8) +: 8])) +
-                            ($signed(row_window_data_reg[(oy_idx * 10 + ox_idx + 6) * 8 +: 8]) *
-                            $signed(weight_row_data_reg[(ch_idx * 56) + (6 * 8) +: 8]));
+                        // 4. 最终结合与非阻塞赋值推导触发器
+                        out_row_sum_bus[((ch_idx * 16 + oy_idx * 4 + ox_idx) * 19) +: 19] <= s_l2_0 + s_l2_1;
                     end
                 end
             end

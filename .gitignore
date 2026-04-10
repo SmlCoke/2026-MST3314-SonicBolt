@@ -43,3 +43,6 @@ prepared_sim/
 
 # 编译出的 SRAM 原始文件
 SRAM/
+
+# 工艺库文件
+SMIC18/
