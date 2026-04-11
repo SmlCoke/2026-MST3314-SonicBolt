@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_shared_input_buffer
  * 作者: SonicBolt 团队
- * 日期: 2026-04-08
- * 版本: v2.4
+ * 日期: 2026-04-11
+ * 版本: v2.5
  *
  * 功能概述:
  *   Conv1 输入前端，使用单口 SRAM 保存整帧输入图，并用 14 行工作集缓存当前 pos。
@@ -32,6 +32,7 @@
  *   - v2.2 引入了 Memory Compiler 生成的 SRAM 模块，重构了读写控制逻辑。
  *   - v2.3 增加了输入双帧 Ping-Pong 缓存机制
  *   - v2.4 将杂糅状态更新逻辑重塑为三段式有限状态机
+ *   - v2.5 修改以适配半窗缓存逻辑
  */
 module conv_shared_input_buffer (
     input  wire          clk,              // 时钟
@@ -141,7 +142,9 @@ module conv_shared_input_buffer (
     assign load_pos0_req      = pos_req_valid && !workset_loaded && (pos_req_pos == 4'd0);
     assign roll_pos_req       = pos_req_valid && workset_loaded &&
                                 (pos_req_pos == (current_pos + 4'd1)) && prefetched_valid;
-    assign issue_prefetch_req = consume_tick && workset_loaded && (current_pos < 4'd8);
+
+    // 为了适配 v2.4 的新结构——半窗缓存，这里将 
+    assign issue_prefetch_req = consume_tick && workset_loaded && (current_pos < 4'd9);
 
     // SRAM 写使能信号: 应该写并且选中当前 bank
     assign frame_wr_en_ping = write_data_fire && ~selected_write_bank;
@@ -398,21 +401,27 @@ module conv_shared_input_buffer (
                 case (current_state)
                     PREFETCH_IDLE: begin
                         if (issue_prefetch_req) begin
-                            frame_rd_en_reg   <= 1'b1;
-                            frame_rd_addr_reg <= ({1'b0, current_pos} << 1) + 5'd14;
+                            // pos=8 滚到 pos=9 时，尾部两行固定补零，不再访问越界地址 30/31。
+                            if (current_pos < 4'd8) begin
+                                frame_rd_en_reg   <= 1'b1;
+                                frame_rd_addr_reg <= ({1'b0, current_pos} << 1) + 5'd14;
+                            end
                         end
                     end
                     PREFETCH_WAIT_REQ1: begin
                         if (issue_prefetch_req) begin
-                            frame_rd_en_reg   <= 1'b1;
-                            frame_rd_addr_reg <= ({1'b0, current_pos} << 1) + 5'd15;
+                            if (current_pos < 4'd8) begin
+                                frame_rd_en_reg   <= 1'b1;
+                                frame_rd_addr_reg <= ({1'b0, current_pos} << 1) + 5'd15;
+                            end
                         end
                     end
+                    // 当 pos = 4'd8 时，说明下一个 pos 要请求最后一个 14x10 窗口，此时最后预取的两行直接用 0 填充。
                     PREFETCH_CAP_R0: begin
-                        prefetched_rows[0] <= frame_rdata;
+                        prefetched_rows[0] <= (current_pos == 4'd8) ? 80'd0 : frame_rdata;
                     end
                     PREFETCH_CAP_R1: begin
-                        prefetched_rows[1] <= frame_rdata;
+                        prefetched_rows[1] <= (current_pos == 4'd8) ? 80'd0 : frame_rdata;
                         // 约定 slot=0 放“下一窗口的倒数第二行新增行”
                         //     slot=1 放“下一窗口的最后一行新增行”
                         // 当 slot=1 也完成时，说明两行都已经预取完毕，可以允许 pos 切换。
