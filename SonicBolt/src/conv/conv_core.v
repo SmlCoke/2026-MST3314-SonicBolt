@@ -2,7 +2,7 @@
 /*
  * 模块名称: conv_core
  * 作者: SonicBolt 团队
- * 日期: 2026-04-08
+ * 日期: 2026-04-11
  * 版本: v2.3
  *
  * 功能概述:
@@ -74,9 +74,8 @@ module conv_core #(
 );
     // 状态机状态列表
     parameter IDLE  = 2'b00;
-    parameter START = 2'b01;
-    parameter BUSY  = 2'b10;
-    parameter DONE  = 2'b11;
+    parameter BUSY  = 2'b01;
+    parameter DONE  = 2'b10;
     reg [1:0] current_state, next_state;
 
     // 9 个 pos x 8 个 group = 72 个 token
@@ -156,14 +155,12 @@ module conv_core #(
         case (current_state)
             IDLE: begin
                 if (start) begin
-                    next_state = START;
+                    next_state = BUSY;
                 end else begin
                     next_state = IDLE;
                 end
             end
-            START: begin
-                next_state = BUSY; // 启动后直接进入 BUSY 状态
-            end
+
             BUSY: begin
                 if (quant_valid && quant_last) begin
                     next_state = DONE; // 当最后一个 token 的量化结果出来时进入 DONE 状态
@@ -205,7 +202,6 @@ module conv_core #(
                     end
                 end
 
-                START,
                 BUSY: begin
                     busy         <= 1'b1;
                     // stage0_* 在当前拍锁存本拍真正发出去的 token 元数据。
