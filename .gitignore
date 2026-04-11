@@ -7,6 +7,9 @@ build/
 # 各种结果文件夹
 results/
 result/
+reports/
+outputs
+output
 
 # 临时文件夹
 temp/
@@ -36,6 +39,7 @@ MiniCNN/src
 *dbg*
 *.vvp*
 *.report*
+*.rpt
 
 # 预处理数据
 prepared_conv_test/
@@ -47,3 +51,6 @@ SRAM/
 
 # 工艺库文件
 SMIC18/
+
+# 各种测试文件夹
+syn_test/
