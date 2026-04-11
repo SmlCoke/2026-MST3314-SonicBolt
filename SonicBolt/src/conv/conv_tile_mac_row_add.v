@@ -2,7 +2,7 @@
 /*
  * 模块名称: conv_tile_mac_row_add
  * 作者: SonicBolt 团队
- * 日期: 2026-04-10
+ * 日期: 2026-04-11
  * 版本: v3.2
  *
  * 功能概述:
@@ -15,11 +15,9 @@
  * 输出组织:
  *   - out_sum_bus 含 64 个 INT32，总宽 2048bit。
  *
- * 设计说明:
- *   - 保持原有两级流水语义：
- *     Stage1 计算部分和并打拍；Stage2 汇总并打拍输出。
- *   - 为降低综合复杂度，单点归约拆分为:
- *     conv_tile_mac_reduce11_stage1_cell + conv_tile_mac_reduce11_stage2_cell。
+ * 版本定位:
+ *   - v3.1 相比 v3.0 在内部增加了一级流水线，将 11 -> 1 加法树拆分为两级，瓦解这个巨型组合逻辑组合拥堵点，期望*     为下步布线工具指明打拍切入的位置，改善可布线性和时序宽裕度
+ *   - v3.2 为了降低综合复杂度，计算被拆成小单元，并用 generate 展开。
  */
 module conv_tile_mac_row_add (
     input  wire                 clk,             // 时钟
@@ -81,6 +79,7 @@ module conv_tile_mac_row_add (
             assign row_10 = in_row_sum_bus[(10*1216) + IDX*19 +: 19];
             assign bias_val = bias_data_bus[(IDX/16)*16 +: 16];
 
+            // stage1: 计算每一个输出块，11 行 + 偏置 得到 6 个部分和
             conv_tile_mac_reduce11_stage1_cell u_stage1_cell (
                 .row_0(row_0),
                 .row_1(row_1),
@@ -109,6 +108,7 @@ module conv_tile_mac_row_add (
             assign stage1_partial_bus_comb[(IDX*120 + 80) +: 20] = p4;
             assign stage1_partial_bus_comb[(IDX*120 + 100) +: 20] = p5;
 
+            // stage2: 6 个部分和相加得到最终结果
             conv_tile_mac_reduce11_stage2_cell u_stage2_cell (
                 .partial_0(partial_0[IDX]),
                 .partial_1(partial_1[IDX]),

@@ -73,7 +73,11 @@ read_design -format verilog ../rtl/cnn/cnn_chip.v
 set current_design cnn_chip
 
 link_design
-make_unique
+# NOTE:
+#   ZenSyn currently may trigger an internal crash in constant-cleanup passes
+#   on this project after make_unique + hierarchical optimize.
+#   Keep make_unique disabled in this flow for tool stability.
+# make_unique
 
 # Read Timing Constraint
 source ../scripts/cnn.sdc

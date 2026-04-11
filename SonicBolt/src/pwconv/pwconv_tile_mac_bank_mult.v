@@ -2,7 +2,7 @@
 /*
  * 模块名称: pwconv_tile_mac_bank_mult
  * 作者: SonicBolt 团队
- * 日期: 2026-04-10
+ * 日期: 2026-04-11
  * 版本: v1.2
  *
  * 功能概述:
@@ -17,6 +17,10 @@
  * 设计说明:
  *   - 组合点积单元拆分为 pwconv_tile_mac_dot4_cell。
  *   - 本模块保持“组合计算 + 输出打一拍”的时序语义不变。
+ *
+ * 版本定位:
+ *   - v1.1 修复了部分注释错误，理清了 bus 的维度和索引关系，功能上完全等价于v1.0
+ *   - v1.2 为了降低综合复杂度，计算被拆成小单元 pwconv_tile_mac_dot4_cell 并用 generate 展开。
  */
 module pwconv_tile_mac_bank_mult (
     input  wire               clk,
@@ -38,6 +42,8 @@ module pwconv_tile_mac_bank_mult (
                     localparam integer OUT_IDX = g_group * 16 + g_out * 4 + g_spatial;
 
                     wire signed [17:0] partial_point;
+
+                    // 4 路点积单元
                     pwconv_tile_mac_dot4_cell u_dot4_cell (
                         .act_0(tile_data_bus[(g_group*16 + 0*4 + g_spatial) * 8 +: 8]),
                         .act_1(tile_data_bus[(g_group*16 + 1*4 + g_spatial) * 8 +: 8]),
@@ -56,6 +62,7 @@ module pwconv_tile_mac_bank_mult (
         end
     endgenerate
 
+    // 将组合逻辑的计算结果打拍输出
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             out_partial_bus <= {(128*18){1'b0}};

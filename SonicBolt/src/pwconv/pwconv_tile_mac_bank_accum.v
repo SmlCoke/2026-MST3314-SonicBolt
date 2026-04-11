@@ -2,7 +2,7 @@
 /*
  * 模块名称: pwconv_tile_mac_bank_accum
  * 作者: SonicBolt 团队
- * 日期: 2026-04-10
+ * 日期: 2026-04-11
  * 版本: v1.1
  *
  * 功能概述:
@@ -11,6 +11,9 @@
  * 设计说明:
  *   - 组合归约单元拆分为 pwconv_tile_mac_reduce8_cell。
  *   - 保持原接口语义：out_valid 与 in_valid 同拍；仅在 in_valid=1 时更新 out_accum_bus。
+ * 
+ * 版本定位:
+ *   - v1.1 为了降低综合复杂度，计算被拆成小单元 pwconv_tile_mac_reduce8_cell 并用 generate 展开。
  */
 module pwconv_tile_mac_bank_accum (
     input  wire               clk,
@@ -48,6 +51,7 @@ module pwconv_tile_mac_bank_accum (
         end
     endgenerate
 
+    // 将组合逻辑的计算结果打拍输出
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             out_accum_bus <= {(16*21){1'b0}};

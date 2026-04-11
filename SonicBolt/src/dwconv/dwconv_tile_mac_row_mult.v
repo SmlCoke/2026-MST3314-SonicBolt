@@ -2,7 +2,7 @@
 /*
  * 模块名称: dwconv_tile_mac_row_mult
  * 作者: SonicBolt 团队
- * 日期: 2026-04-10
+ * 日期: 2026-04-11
  * 版本: v1.1
  *
  * 功能概述:
@@ -24,6 +24,8 @@
  *   - 权重也已经在外部预切分为当前 kernel_row 的 96bit 行权重。
  * 
  * 版本定位:
+ *  - v1.0 初始版本，完成基本功能。
+ *  - v1.1 为了降低综合复杂度，计算被拆成小单元 dwconv_tile_mac_dot3_cell 并用 generate 展开。
  *  
  */
 module dwconv_tile_mac_row_mult (

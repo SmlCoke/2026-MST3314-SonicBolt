@@ -2,7 +2,7 @@
 /*
  * 模块名称: dwconv_tile_mac_row_add
  * 作者: SonicBolt 团队
- * 日期: 2026-04-10
+ * 日期: 2026-04-11
  * 版本: v1.1
  *
  * 功能概述:
@@ -18,6 +18,10 @@
  * 设计说明:
  *   - 组合归约单元拆分为 dwconv_tile_mac_reduce3_cell。
  *   - 本模块仅保留输出打一拍，时序语义与原实现一致。
+ *
+ * 版本定位:
+ *   - v1.0 初始版本，完成基本功能。
+ *   - v1.1 为了降低综合复杂度，计算被拆成小单元，并用 generate 展开。
  */
 module dwconv_tile_mac_row_add (
     input  wire                 clk,             // 时钟
@@ -40,11 +44,13 @@ module dwconv_tile_mac_row_add (
             wire signed [15:0] bias_val;
             wire signed [31:0] sum_point;
 
+            // 选取对应最后16个输出值每个输出值的3个部分和以及偏置
             assign row_0    = in_row_sum_bus[(0*288) + IDX*18 +: 18];
             assign row_1    = in_row_sum_bus[(1*288) + IDX*18 +: 18];
             assign row_2    = in_row_sum_bus[(2*288) + IDX*18 +: 18];
             assign bias_val = bias_data_bus[(IDX/4)*16 +: 16];
 
+            // 4个数值做两级加法
             dwconv_tile_mac_reduce3_cell u_reduce3_cell (
                 .row_0(row_0),
                 .row_1(row_1),

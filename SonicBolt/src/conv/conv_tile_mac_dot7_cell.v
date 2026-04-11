@@ -1,6 +1,9 @@
 `timescale 1ns / 1ps
 /*
  * 模块名称: conv_tile_mac_dot7_cell
+ * 作者: SonicBolt 团队
+ * 日期: 2026-04-11
+ * 版本: v1.0
  * 功能:
  *   计算一个 7 项 INT8xINT8 点积，对应一个 (ch, oy, ox) 位置的行内卷积和。
  *

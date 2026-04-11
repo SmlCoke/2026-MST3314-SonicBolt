@@ -1,6 +1,10 @@
 `timescale 1ns / 1ps
 /*
  * 模块名称: conv_tile_mac_reduce11_stage1_cell
+ * 作者: SonicBolt 团队
+ * 日期: 2026-04-11
+ * 版本: v1.0
+ *
  * 功能:
  *   对单个输出位置的 11 路行和做第一阶段归约，输出 6 路部分和。
  *

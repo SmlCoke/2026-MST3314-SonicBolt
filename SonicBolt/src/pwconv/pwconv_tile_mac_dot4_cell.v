@@ -1,6 +1,10 @@
 `timescale 1ns / 1ps
 /*
  * 模块名称: pwconv_tile_mac_dot4_cell
+ * 作者: SonicBolt 团队
+ * 日期: 2026-04-11
+ * 版本: v1.0
+ *
  * 功能:
  *   对单个输出位置执行 4 路 INT8xINT8 点积，输出 INT18 部分和。
  */

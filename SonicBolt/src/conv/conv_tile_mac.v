@@ -2,7 +2,7 @@
 /*
  * 模块名称: conv_tile_mac
  * 作者: SonicBolt 团队
- * 日期: 2026-03-30
+ * 日期: 2026-04-11
  * 版本: v2.3
  *
  * 功能概述:
@@ -224,7 +224,7 @@ module conv_tile_mac (
     );
 
     // stage2_row_sum_bus 索引方法
-    // 11输出行，每个输出行64个 INT20
+    // 11输出行，每个输出行 64个 INT19
     // 每一输出行，4个通道，每一个通道6个 INT20
     // 每一个通道，4个输入行，每个输入行4个 INT20
     assign stage2_row_sum_bus = {

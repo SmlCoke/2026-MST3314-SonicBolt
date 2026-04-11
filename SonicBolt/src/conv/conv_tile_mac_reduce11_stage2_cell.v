@@ -1,6 +1,10 @@
 `timescale 1ns / 1ps
 /*
  * 模块名称: conv_tile_mac_reduce11_stage2_cell
+ * 作者: SonicBolt 团队
+ * 日期: 2026-04-11
+ * 版本: v1.0
+ *
  * 功能:
  *   对单个输出位置的 6 路部分和做第二阶段归约，输出最终 INT32 累加值。
  *

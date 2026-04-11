@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_tile_mac_row_mult
  * 作者: SonicBolt 团队
- * 日期: 2026-04-10
- * 版本: v4.3
+ * 日期: 2026-04-11
+ * 版本: v4.2
  *
  * 功能概述:
  *   计算某一条预切分 kernel_row 对应的 7 项行内卷积和。
@@ -19,11 +19,13 @@
  *   - weight_row_data : 4(ch) x 7(kx) x 8bit  = 224bit
  *   - out_row_sum_bus : 4(ch) x 4 x 4 x INT19 = 1216bit
  *
- * 设计说明:
- *   - 本级只处理 7 项乘法与行内加法树，不做跨 kernel_row 的累加。
- *   - 输入窗口与权重都已在上游按 kernel_row 预切分。
- *   - 为了降低综合复杂度，计算被拆成小单元 conv_tile_mac_dot7_cell 并用 generate 展开。
- *   - 接口与流水拍数保持不变：输入打一拍，结果再打一拍。
+ * 版本定位:
+ *   - v2.0 去掉了 in_val / wt_val / prod / sum 等中间变量，直接用一条表达式描述乘加树，
+ *     让综合工具根据目标工艺自行推导乘法器和加法树结构。
+ *   - v3.0 认为不需要在计算时对每个输入都拓展位宽，只需要保证 <= 左边的输出位宽就行。
+ *   - v4.0 分析得出，7组INT8的乘累加配合得到的最大位宽为 INT19，因此将输出位宽从 INT32 缩减到 INT19
+ *   - v4.1 在内部增加了数据/权重的下沉流水级，与外部 Stage1 的元数据/偏置打拍匹配
+ *   - v4.2 为了降低综合复杂度，计算被拆成小单元 conv_tile_mac_dot7_cell 并用 generate 展开。
  */
 module conv_tile_mac_row_mult (
     input  wire                clk,             // 时钟
@@ -78,6 +80,7 @@ module conv_tile_mac_row_mult (
         end
     endgenerate
 
+    // ---------- 输入数据打拍下沉 ----------
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             row_window_data_reg <= {4*10*8{1'b0}};
