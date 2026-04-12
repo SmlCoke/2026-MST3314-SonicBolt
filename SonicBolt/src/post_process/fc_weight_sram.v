@@ -2,7 +2,7 @@
 /*
  * 模块名称: fc_weight_sram
  * 作者: SonicBolt 团队
- * 日期: 2026-04-06
+ * 日期: 2026-04-12
  * 版本: v1.1
  *
  * 功能概述:
@@ -52,18 +52,12 @@ module fc_weight_sram #(
     assign weight_sram_addr = weight_wr_en ? weight_wr_addr :
                               (prefetch_first_word ? token_addr : next_token_addr);
 
-    sram_sp #(
-        .DATA_W(64),
-        .DEPTH(WEIGHT_DEPTH),
-        .ADDR_W(7)
-    ) u_fc_weight_sram (
-        .clk(clk),
-        .rst_n(rst_n),
-        .en(weight_sram_en),
-        .wr_en(weight_wr_en),
-        .addr(weight_sram_addr),
-        .wdata(weight_wr_data),
-        .rdata(out_weight_rdata)
+    S018V3EBCDSP_X20Y4D64_PR u_fc_weight_sram (
+        .CLK(clk),
+        .CEN(~weight_sram_en),
+        .WEN(~weight_wr_en),
+        .A(weight_sram_addr),
+        .D(weight_wr_data),
+        .Q(out_weight_rdata)
     );
-
 endmodule

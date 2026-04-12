@@ -2,18 +2,25 @@
 /*
  * 模块名称: cnn
  * 作者: SonicBolt 团队
- * 日期: 2026-04-08
- * 版本: v1.3
+ * 日期: 2026-04-12
+ * 版本: v1.4
  *
  * 功能概述:
  *   SonicBolt 顶层 CNN 管线，依次串接:
  *     Conv -> DWConv -> PWConv -> Post-Process(Maxpool + FC + Sigmoid)
  *
- * 当前版本说明:
- *   - 顶层已经接入 Conv 输入双帧 Ping-Pong 缓存握手。
- *   - 外部通过 `img_wr_commit` 提交一整帧输入，通过 `img_wr_ready` 判断何时可以继续写下一帧。
- *   - 为避免下一帧在级联传播过程中把 DWConv / PWConv 的首个 `fire` 冲丢，
- *     顶层使用 `run_enable` / `relaunch_pending` 只在 Conv、DWConv 可接新帧且 PWConv 已进入安全尾段时重新拉起下一帧。
+ * 版本定位:
+ *   - v1.0 先实现 Conv-DWConv 级联
+ *   - v1.1 在 v1.0 基础上集成 PWConv，完成三个卷积层的串联
+ *   - v1.2 成功集成所有子系统，CNN 全流程实现成功，并且通过测试！
+ *   - v1.3 接入 Conv 输入双帧 Ping-Pong 缓存握手。外部通过 `img_wr_commit` 提交一整帧输入，通过 
+ *      `img_wr_ready` 判断何时可以继续写下一帧。为避免下一帧在级联传播过程中把 DWConv / PWConv 的首个 
+ *      `fire` 冲丢，顶层使用 `run_enable` / `relaunch_pending` 只在 Conv、DWConv 可接新帧且 PWConv 已
+ *       进入安全尾段时重新拉起下一帧。
+ *   - v1.4 将 Conv 输出修改为半窗缓存，砍掉一半乘法器（2464个INT8）和一半加法树（32组四级加法树），同时元数据
+ *     语义只在 Conv 层之间发生变动，通过还原机制使得 DWConv 层及之后元数据语义维持不变。
+ *     
+
  */
 
 module cnn #(

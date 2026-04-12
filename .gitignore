@@ -54,5 +54,9 @@ SMIC18/
 
 # 注释还原临时文件夹
 comment/
+
 # 各种测试文件夹
 syn_test/
+
+# 涉及部分隐私的笔记文档
+SonicBolt/syn/docs/

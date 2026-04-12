@@ -23,9 +23,9 @@ DWConv 仍然沿用与 Conv 一致的流式 token 调度处理架构，但它**�
 ### 2.2 吞吐
 DWConv 采用 tile 级流式处理。设计目标与 Conv 一样，是在流水线填满后做到：每次时钟能够接收 1 个输入 token，同时也输出 1 个结果 token。
 
-整张图一共需要处理 $|\text{pos}|\times |\text{group}| = 9 \times 8 = 72$ 个 token。因此处理 1 张图像理论上约需 72 个时钟周期。如果要满足 $\text{FPS}$ 的指标，对应时钟频率需求 ${f_{\text{std}}}$ 与周期数 $N$ 的关系为：
+整张图一共需要处理 $|\text{pos}|\times |\text{group}| = 9 \times 8 = 72$ 个 token。因此处理 1 张图像理论上约需 72 个时钟周期。在半窗缓存机制加入和，该周期数扩大至 80。如果要满足 $\text{FPS}$ 的指标，对应时钟频率需求 ${f_{\text{std}}}$ 与周期数 $N$ 的关系为：
 
-$$f_{\text{std}} = N \text{MHz} = 72 \text{MHz}$$
+$$f_{\text{std}} = N \text{MHz} = 80 \text{MHz}$$
 
 当然，实际系统频率还要结合握手停顿、上游供数和下游回压综合考虑。
 

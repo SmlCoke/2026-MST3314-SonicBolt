@@ -2,7 +2,7 @@
 /*
  * 模块名称: conv_tile_mac
  * 作者: SonicBolt 团队
- * 日期: 2026-04-11
+ * 日期: 2026-04-12
  * 版本: v2.4
  *
  * 功能概述:
@@ -138,71 +138,100 @@ module conv_tile_mac (
         .out_fire(stage1_fire)       // out: 打一拍后的 fire   
     );
 
+    // ---------------------------------------------------------------------
+    // ------------------------- 第二级流水：stage2 --------------------------
+    // - 11 组 row_mult 并行，每组负责计算一行卷积核与对应输入窗口的乘加，输出 4ch x 2row x 4col 的半窗乘积和
+    // - bias 和 元数据打拍
+    // - row_mult 单元内部还内置 stage1 的数据和权重打拍
+    // ---------------------------------------------------------------------
+
     // stage2: 11 条 kernel row 的半窗乘法阵列。
-    // 每条 row_mult 物理上仍接 4 行载体，但逻辑上只输出前 2 行结果。
+    // 每条 row_mult 现在直接只接 2 行载体，和半窗 2x4 的实际需求完全对齐。
     conv_tile_mac_row_mult u_row_mult_0 (
         .clk(clk), .rst_n(rst_n),
-        .row_window_data(pos_window_data[4*80-1:0]),     // 0~3 行输入条带（这四行与卷积核第一行对应）
-        .weight_row_data(weight_data_bus[224-1:0]),      // 卷积核第一行
+        // 0~1 行输入条带
+        .row_window_data(pos_window_data[2*80-1:0]), 
+        // 卷积核第一行
+        .weight_row_data(weight_data_bus[224-1:0]),      
         .out_row_sum_bus(row_sum_bus_0)
     );
     conv_tile_mac_row_mult u_row_mult_1 (
         .clk(clk), .rst_n(rst_n),
-        .row_window_data(pos_window_data[5*80-1:1*80]),   // 1~4 行输入条带（这四行与卷积核第二行对应）
-        .weight_row_data(weight_data_bus[2*224-1:1*224]), // 卷积核第二行
+        // 1~2 行输入条带
+        .row_window_data(pos_window_data[3*80-1:1*80]), 
+        // 卷积核第二行
+        .weight_row_data(weight_data_bus[2*224-1:1*224]), 
         .out_row_sum_bus(row_sum_bus_1)
     );
     conv_tile_mac_row_mult u_row_mult_2 (
         .clk(clk), .rst_n(rst_n),
-        .row_window_data(pos_window_data[6*80-1:2*80]),   // 2~5 行输入条带（这四行与卷积核第二行对应）
-        .weight_row_data(weight_data_bus[3*224-1:2*224]), // 卷积核第三行
+        // 2~3 行输入条带
+        .row_window_data(pos_window_data[4*80-1:2*80]),   
+        // 卷积核第三行
+        .weight_row_data(weight_data_bus[3*224-1:2*224]), 
         .out_row_sum_bus(row_sum_bus_2)
     );
     conv_tile_mac_row_mult u_row_mult_3 (
         .clk(clk), .rst_n(rst_n),
-        .row_window_data(pos_window_data[7*80-1:3*80]),
-        .weight_row_data(weight_data_bus[4*224-1:3*224]),
+        // 3~4 行输入条带
+        .row_window_data(pos_window_data[5*80-1:3*80]),   
+        // 卷积核第四行
+        .weight_row_data(weight_data_bus[4*224-1:3*224]), 
         .out_row_sum_bus(row_sum_bus_3)
     );
     conv_tile_mac_row_mult u_row_mult_4 (
         .clk(clk), .rst_n(rst_n),
-        .row_window_data(pos_window_data[8*80-1:4*80]),
-        .weight_row_data(weight_data_bus[5*224-1:4*224]),
+        // 4~5 行输入条带
+        .row_window_data(pos_window_data[6*80-1:4*80]),   
+        // 卷积核第五行
+        .weight_row_data(weight_data_bus[5*224-1:4*224]), 
         .out_row_sum_bus(row_sum_bus_4)
     );
     conv_tile_mac_row_mult u_row_mult_5 (
         .clk(clk), .rst_n(rst_n),
-        .row_window_data(pos_window_data[9*80-1:5*80]),
+        // 5~6 行输入条带
+        .row_window_data(pos_window_data[7*80-1:5*80]),
+        // 卷积核第六行
         .weight_row_data(weight_data_bus[6*224-1:5*224]),
         .out_row_sum_bus(row_sum_bus_5)
     );
     conv_tile_mac_row_mult u_row_mult_6 (
         .clk(clk), .rst_n(rst_n),
-        .row_window_data(pos_window_data[10*80-1:6*80]),
+        // 6~7 行输入条带
+        .row_window_data(pos_window_data[8*80-1:6*80]),
+        // 卷积核第七行
         .weight_row_data(weight_data_bus[7*224-1:6*224]),
         .out_row_sum_bus(row_sum_bus_6)
     );
     conv_tile_mac_row_mult u_row_mult_7 (
         .clk(clk), .rst_n(rst_n),
-        .row_window_data(pos_window_data[11*80-1:7*80]),
+        // 7~8 行输入条带
+        .row_window_data(pos_window_data[9*80-1:7*80]),
+        // 卷积核第八行
         .weight_row_data(weight_data_bus[8*224-1:7*224]),
         .out_row_sum_bus(row_sum_bus_7)
     );
     conv_tile_mac_row_mult u_row_mult_8 (
         .clk(clk), .rst_n(rst_n),
-        .row_window_data(pos_window_data[12*80-1:8*80]),
+        // 8~9 行输入条带
+        .row_window_data(pos_window_data[10*80-1:8*80]),
+        // 卷积核第九行
         .weight_row_data(weight_data_bus[9*224-1:8*224]),
         .out_row_sum_bus(row_sum_bus_8)
     );
     conv_tile_mac_row_mult u_row_mult_9 (
         .clk(clk), .rst_n(rst_n),
-        .row_window_data(pos_window_data[13*80-1:9*80]),
+        // 9~10 行输入条带
+        .row_window_data(pos_window_data[11*80-1:9*80]),
+        // 卷积核第十行
         .weight_row_data(weight_data_bus[10*224-1:9*224]),
         .out_row_sum_bus(row_sum_bus_9)
     );
     conv_tile_mac_row_mult u_row_mult_10 (
         .clk(clk), .rst_n(rst_n),
-        .row_window_data(pos_window_data[14*80-1:10*80]),
+        // 10~11 行输入条带
+        .row_window_data(pos_window_data[12*80-1:10*80]),
+        // 卷积核第十一行
         .weight_row_data(weight_data_bus[11*224-1:10*224]),
         .out_row_sum_bus(row_sum_bus_10)
     );
@@ -212,6 +241,7 @@ module conv_tile_mac (
         row_sum_bus_4, row_sum_bus_3, row_sum_bus_2, row_sum_bus_1, row_sum_bus_0
     };
 
+    // stage2: 元数据和偏置打拍。
     meta_pipe u_meta_pipe_stage2 (
         .clk(clk),
         .rst_n(rst_n),
@@ -243,34 +273,45 @@ module conv_tile_mac (
         .out_sum_bus(out_accum_bus)
     );
 
+    // stage3: 元数据打拍
     meta_pipe u_meta_pipe_stage3 (
         .clk(clk),
         .rst_n(rst_n),
-        .in_valid(stage2_valid),
-        .in_last(stage2_last),
-        .in_pos(stage2_pos),
-        .in_group(stage2_group),
-        .in_fire(stage2_fire),
-        .out_valid(stage3_valid),
-        .out_last(stage3_last),
-        .out_pos(stage3_pos),
-        .out_group(stage3_group),
-        .out_fire(stage3_fire)
+
+        // ---------- 输入元数据 ----------
+        .in_valid(stage2_valid),   // in: 当前 token 有效                  
+        .in_last(stage2_last),     // in: 当前 token 是否为整张图最后一个 token              
+        .in_pos(stage2_pos),       // in: 当前 token 的 pos 编号，范围 0~9, 0 表示起始半窗，非有效pos
+        .in_group(stage2_group),   // in: 当前 token 的 group 编号，范围 0~7                  
+        .in_fire(stage2_fire),     // in: 第二层启动信号              
+
+        // ---------- 输出元数据 ----------
+        .out_valid(stage3_valid),  // out: 打一拍后的 valid           
+        .out_last(stage3_last),    // out: 打一拍后的 last          
+        .out_pos(stage3_pos),      // out: 打一拍后的 pos         
+        .out_group(stage3_group),  // out: 打一拍后的 group           
+        .out_fire(stage3_fire)     // out: 打一拍后的 fire         
     );
 
+
+    // stage4: 元数据打拍
     meta_pipe u_meta_pipe_stage4 (
         .clk(clk),
         .rst_n(rst_n),
-        .in_valid(stage3_valid),
-        .in_last(stage3_last),
-        .in_pos(stage3_pos),
-        .in_group(stage3_group),
-        .in_fire(stage3_fire),
-        .out_valid(stage4_valid),
-        .out_last(stage4_last),
-        .out_pos(stage4_pos),
-        .out_group(stage4_group),
-        .out_fire(stage4_fire)
+
+        // ---------- 输入元数据 ----------
+        .in_valid(stage3_valid),   // in: 当前 token 有效
+        .in_last(stage3_last),     // in: 当前 token 是否为整张图最后一个 token    
+        .in_pos(stage3_pos),       // in: 当前 token 的 pos 编号，范围 0~9, 0 表示起始半窗，非有效pos
+        .in_group(stage3_group),   // in: 当前 token 的 group 编号，范围0~7                         
+        .in_fire(stage3_fire),     // in: 第二层启动信号      
+        
+        // ---------- 输出元数据 ----------
+        .out_valid(stage4_valid),  // out: 打一拍后的 valid       
+        .out_last(stage4_last),    // out: 打一拍后的 last      
+        .out_pos(stage4_pos),      // out: 打一拍后的 pos     
+        .out_group(stage4_group),  // out: 打一拍后的 group       
+        .out_fire(stage4_fire)     // out: 打一拍后的 fire     
     );
 
     assign out_valid = stage4_valid;

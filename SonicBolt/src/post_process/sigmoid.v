@@ -2,7 +2,7 @@
 /*
  * 模块名称: post_process_sigmoid
  * 作者: SonicBolt 团队
- * 日期: 2026-04-05
+ * 日期: 2026-04-12
  * 版本: v1.0
  *
  * 功能概述:
@@ -76,18 +76,13 @@ module post_process_sigmoid (
                             (lut_read1_cmd ? req_addr1 : 8'd0));
     assign lut_sram_wdata = lut_wr_data;
 
-    sram_sp #(
-        .DATA_W(32),
-        .DEPTH(256),
-        .ADDR_W(8)
-    ) u_sigmoid_lut_sram (
-        .clk(clk),
-        .rst_n(rst_n),
-        .en(lut_sram_en),
-        .wr_en(lut_sram_wr_en),
-        .addr(lut_sram_addr),
-        .wdata(lut_sram_wdata),
-        .rdata(lut_sram_rdata)
+    S018V3EBCDSP_X64Y4D32_PR u_sigmoid_lut_sram (
+        .CLK(clk),
+        .CEN(~lut_sram_en),
+        .WEN(~lut_sram_wr_en),
+        .A(lut_sram_addr),
+        .D(lut_sram_wdata),
+        .Q(lut_sram_rdata)
     );
 
     // LUT 单端口 SRAM：先读 addr0，再读 addr1，最后拼包成两路 FP32 输出。

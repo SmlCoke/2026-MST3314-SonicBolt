@@ -2,15 +2,16 @@
 /*
  * 模块名称: pwconv_tile_mac_bank_accum
  * 作者: SonicBolt 团队
- * 日期: 2026-04-11
+ * 日期: 2026-04-12
  * 版本: v1.1
  *
  * 功能概述:
  *   - 对 8 个输入 group 的部分和做归约，输出 4(out) x 4(spatial) 共 16 个 INT21。
- *
- * 设计说明:
- *   - 组合归约单元拆分为 pwconv_tile_mac_reduce8_cell。
- *   - 保持原接口语义：out_valid 与 in_valid 同拍；仅在 in_valid=1 时更新 out_accum_bus。
+ * 
+ * 运算复杂度分析:
+ *   - 4ch/group x 4 spa = 16 个并行计算单元
+ *   - 每个并行计算单元为三级加法树，每个加法树实现 8 x INT18 -> 1 x INT21 的归约。
+ *   - 逻辑深度为: 3 (加法树三级) = 3A
  * 
  * 版本定位:
  *   - v1.1 为了降低综合复杂度，计算被拆成小单元 pwconv_tile_mac_reduce8_cell 并用 generate 展开。
@@ -32,8 +33,10 @@ module pwconv_tile_mac_bank_accum (
         for (g_out = 0; g_out < 4; g_out = g_out + 1) begin : G_OUT
             for (g_spatial = 0; g_spatial < 4; g_spatial = g_spatial + 1) begin : G_SPATIAL
                 localparam integer IDX = g_out * 4 + g_spatial;
-
+                
+                // 将每个输出通道、每个空间位置对应的 8 个输入部分进行 8 -> 1 归约
                 wire signed [20:0] accum_point;
+                // 三级加法树
                 pwconv_tile_mac_reduce8_cell u_reduce8_cell (
                     .partial_0(in_partial_bus[((0*16 + IDX) * 18) +: 18]),
                     .partial_1(in_partial_bus[((1*16 + IDX) * 18) +: 18]),

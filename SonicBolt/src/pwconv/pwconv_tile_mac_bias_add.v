@@ -2,7 +2,7 @@
 /*
  * 模块名称: pwconv_tile_mac_bias_add
  * 作者: SonicBolt 团队
- * 日期: 2026-04-01
+ * 日期: 2026-04-12
  * 版本: v1.0
  *
  * 功能概述:
@@ -11,6 +11,11 @@
  * 输入组织:
  *   - in_accum_bus: 4(out) x 4(spatial) x INT21
  *   - in_bias_bus : 4(out) x INT16
+ *
+ * 运算复杂度分析: 
+ *  - 4out x 4spa = 16 个并行计算单元
+ *  - 每个并行计算单元为单级加法, INT21 + INT16 -> INT32
+ *  - 逻辑深度为: 1A
  */
 module pwconv_tile_mac_bias_add (
     input  wire             clk,

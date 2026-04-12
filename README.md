@@ -3,9 +3,9 @@
 # ⚡️SonicBolt(声速闪电)
 **数字集成电路设计 · 高性能 CNN 加速器全流程设计**
 
-[![Version](https://img.shields.io/badge/Version-v5.3-blue.svg)]() [![Institution](https://img.shields.io/badge/Institution-SJTU-red.svg)](https://www.sjtu.edu.cn/) [![SmlCoke](https://img.shields.io/badge/SmlCoke-https://smlcoke.com-brightgreen.svg)](https://smlcoke.com) [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![Version](https://img.shields.io/badge/Version-v5.4-blue.svg)]() [![Institution](https://img.shields.io/badge/Institution-SJTU-red.svg)](https://www.sjtu.edu.cn/) [![SmlCoke](https://img.shields.io/badge/SmlCoke-https://smlcoke.com-brightgreen.svg)](https://smlcoke.com) [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 
-[项目简介](#i-项目简介) • [仓库结构](#ii-仓库结构) • [各模块说明](#iii-各模块说明) • [设计进度](#iv-设计进度)
+[项目简介](#i-项目简介) • [仓库结构](#ii-仓库结构) • [各模块说明](#iii-各模块说明) • [Quick Start](#iv-quick-start-guide) • [设计进度](#v-设计进度)
 
 </div>
 
@@ -67,8 +67,9 @@ CNN-Accelerator/
 │   └── README.md                 # 详细说明与学习指南
 │
 ├── Scripts/                      # 辅助脚本（如参数转换、仿真自动化等）
-│   ├── interception.py           # git commit 时的审查与拦截脚本
-│   └── search_files_by_name      # 根据文件名片段搜索文件
+│   ├── interception.py           # git commit 时的审查与拦截脚本，原始版本
+│   ├── pre_commit.py             # git commit 时的审查与拦截脚本，集成 python pre-commit 框架
+│   └── search_files_by_name.py   # 根据文件名片段搜索文件
 │
 └── SonicBolt/                    # ★ RTL 实现（本团队编写）
     ├── data/                     # 测试数据和网络参数，供仿真使用
@@ -80,6 +81,7 @@ CNN-Accelerator/
         ├── post_process/         # 后处理层 RTL 实现
         ├── utils/                # 公共模块（SRAM 封装、流水打拍、量化激活等）
         ├── cnn.v                 # 顶层模块，连接各子系统
+        ├── cnn_chip.v            # 用于综合的顶层封装，删除了所有的对外 SRAM 接口。
         ├── cnn_test_tb.v         # 用于验证逐层输出是否正确的 testbench 模块
         ├── cnn_sim_tb.v          # 用于完整仿真验证的 testbench 模块
         ├── run_cnn_test_tb.py    # 自动化仿真脚本: 验证功能正确性 
@@ -167,6 +169,7 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 - CNN-v1.0: SonicBolt v5.1，全链路基础实现，包含所有功能，并且通过功能仿真验证
 - CNN-v1.1: SonicBolt v5.2，新增**输入 Ping-Pong 缓存机制**，实现流水线连续计算
 - CNN-v1.2: SonicBolt v5.3，将杂糅的状态转移逻辑重构为有限状态机写法，提升代码可读性和可维护性。
+- CNN-v1.3: SonicBolt v5.4，新增**半窗缓存机制**，将 Conv 层的计算降低一半，代价是迭代周期从 72 增加至 80 。
 
 ---
 

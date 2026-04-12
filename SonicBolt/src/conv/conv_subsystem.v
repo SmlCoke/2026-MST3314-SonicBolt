@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-04-08
- * 版本: v2.6
+ * 日期: 2026-04-12
+ * 版本: v2.7
  *
  * 功能概述:
  *   Conv 子系统顶层，负责把输入图像缓存、卷积参数存储和 Conv 计算核心串接起来。
@@ -11,12 +11,19 @@
  * 主数据流:
  *   输入图像 -> conv_shared_input_buffer -> conv_core -> out_stream_*
  *
- * 当前版本说明:
- *   - 输入侧已经升级为双帧 Ping-Pong 缓存。
- *   - `img_wr_commit` 用于在整帧写完后提交当前 bank。
- *   - `img_wr_ready` 用于向上层反馈“当前是否还能继续接收下一帧输入”。
- *   - `start` 不再直接驱动 conv_core，而是先与 ready bank 状态组合成 `launch_start`，
- *     只有至少有一帧完整输入已经准备好时才真正启动 Conv 计算。
+ * 版本定位:
+ *   - 当前只实现 Conv 层，但参数存储语义已经固定为“层内完整参数 SRAM”。
+ *   - 本模块内部保存的是 Conv 整层的全部权重和全部偏置，不是“当前这次推理临时需要的参数”。
+ *   - 当前版本输入侧改为单帧缓存，不再保留双 bank ping-pong 输入缓冲
+ *   - 相比 v2.0 版本，当前顶层为“单 SRAM 缓存完整输入 + 单 reg 缓存 window + conv_core 控制预取”主通路。
+ *   - v2.3 相比 v2.2 增加了第二层启动信号 out_stream_fire，当该信号为高时，告诉第二层 SRAM: 
+ *     "马上开始准备参数, 下一个周期就要开始计算了"
+ *   - v2.3 有 bug，fire/last 信号并没有实际作为输出端口，v2.4已修复
+ *   - v2.5 中，将模块下所有公共子模块提取到 utils/ 目录下
+ *   - v2.6 加入双帧缓存机制，实现连续计算，提升吞吐，start 不再直接驱动 conv_core，而是先与 ready bank 状态
+ *      组合成 launch_start
+ *   - v2.7 加入半窗缓存机制，将 MAC 单元 4928 个乘法器缩减为 2464，解决 14x10 窗口重复计算的问题
+ *     
  */
 
 module conv_subsystem #(
@@ -182,16 +189,16 @@ module conv_subsystem #(
         // ---------- 输入输入窗口握手接口 ----------
         .pos_req_valid(pos_req_valid),        // out: 向输入缓存请求一个新的 pos 窗口
         .pos_req_pos(pos_req_pos),            // out: 请求的 pos 编号，范围 0~8，因此使用 4bit
-        .consume_tick(consume_tick),
+        .consume_tick(consume_tick),          // out: 当前 token 是否真正发射进入流水线，告诉输入缓存可以更新窗口状态了
         .pos_window_valid(pos_window_valid),  // in: 输入窗口有效
-        .pos_window_data(pos_window_data),  // in: 返回的 14x10 窗口，14 x 10 x 8bit = 1120bit
+        .pos_window_data(pos_window_data),    // in: 返回的 14x10 窗口，14 x 10 x 8bit = 1120bit
 
         // ---------- 权重/偏置交互接口 ----------
         .weight_rd_en(weight_rd_en),          // out: Conv 权重 SRAM 读使能
         .weight_rd_group(weight_rd_group),    // out: 读取哪个 group 的权重
         .bias_rd_en(bias_rd_en),              // out: Conv 偏置 SRAM 读使能
         .bias_rd_group(bias_rd_group),        // out: 读取哪个 group 的偏置
-        .weight_data_bus(weight_data_bus),  // in: 权重 SRAM 读出数据总线
+        .weight_data_bus(weight_data_bus),    // in: 权重 SRAM 读出数据总线
         .bias_data_bus(bias_data_bus),        // in: 偏置 SRAM 读出数据总线
 
         // ---------- 输出数据流接口 ----------
@@ -203,11 +210,11 @@ module conv_subsystem #(
         .out_stream_data(tile_data_int)        // out: 输出数据：量化后的 tile 数据
     );
 
-    assign out_stream_valid = tile_valid_int;
-    assign out_stream_last  = tile_last_int;
-    assign out_stream_pos   = tile_pos_int;
-    assign out_stream_group = tile_group_int;
-    assign out_stream_fire  = tile_fire_int;
-    assign out_stream_data  = tile_data_int;
+    assign out_stream_valid = tile_valid_int;  // 输出元数据: 有效
+    assign out_stream_last  = tile_last_int;   // 输出元数据: last
+    assign out_stream_pos   = tile_pos_int;    // 输出元数据: 位置编号
+    assign out_stream_group = tile_group_int;  // 输出元数据: 通道组编号
+    assign out_stream_fire  = tile_fire_int;   // 输出的第二层启动提示信号
+    assign out_stream_data  = tile_data_int;   // 输出数据: 量化后的 tile 数据
 
 endmodule

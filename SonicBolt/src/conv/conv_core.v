@@ -2,7 +2,7 @@
 /*
  * 模块名称: conv_core
  * 作者: SonicBolt 团队
- * 日期: 2026-04-11
+ * 日期: 2026-04-12
  * 版本: v2.4
  *
  * 功能概述:
@@ -74,7 +74,7 @@ module conv_core #(
     output wire [3:0]    out_stream_pos,           // 输出元数据：位置
     output wire [2:0]    out_stream_group,         // 输出元数据：通道组
     output wire          out_stream_fire,          // 输出元数据：第二层启动信号
-    output wire [511:0]  out_stream_data           // 输出数据：量化后的 4x4 tile
+    output wire [511:0]  out_stream_data           // 输出数据：量化后的 4x4 tile(来自两个半窗拼接)
 );
     parameter IDLE = 2'b00;
     parameter BUSY = 2'b01;
@@ -124,15 +124,12 @@ module conv_core #(
     wire [HALF_TILE_BITS-1:0] quant_data;
 
     // 输出拼接相关信号
+    // capture 代表捕获到正确输出，即元数据 valid = 1 且 pos 不为 0
     wire                      stream_capture;
-    wire                      stream_valid_now;
-    wire                      stream_last_now;
-    wire [3:0]                stream_pos_now;
-    wire [2:0]                stream_group_now;
+    // frame 代表本帧计算结束，即元数据 valid = 1 且 last = 1
     wire                      stream_frame_done;
 
-    reg  [HALF_TILE_BITS-1:0] cached_half_tile;      // 当前 group 的上一 pos 的半窗缓存
-    reg  [FULL_TILE_BITS-1:0] assembled_stream_data;
+    // 输出数据/元数据寄存器
     reg                       stream_valid_reg;
     reg                       stream_last_reg;
     reg  [3:0]                stream_pos_reg;
@@ -166,28 +163,23 @@ module conv_core #(
     // 当 quant_pos > 0 时，说明已经拿到了当前 group 的上一半窗缓存，
     // 可以把“上一 pos 的 2x4”与“当前 pos 的 2x4”拼成完整 4x4 tile。
     assign stream_capture    = quant_valid && (quant_pos > 4'd0);   
-    // ↑ capture 就是下一层启动信号，比其余四大元数据提前一拍，因为其余四个元数据为了等拼接4x4窗口，要显示拼接
-
-    assign stream_valid_now  = stream_valid_reg;
-    assign stream_last_now   = stream_last_reg;
-    assign stream_pos_now    = stream_pos_reg;
-    assign stream_group_now  = stream_group_reg;
+    // ↑ capture 就是下一层启动信号，比其余四大元数据提前一拍，因为其余四个元数据为了等拼接4x4窗口，要显示打拍
 
     // 帧级结束信号：当前 token 是有效的，并且是当前 pos 的最后一个 group。
     assign stream_frame_done = stream_valid_reg && stream_last_reg;
 
     // 读取当前 group 对应的上一半窗缓存，并按通道拼成完整 4x4 tile。
-    always @(*) begin
-        cached_half_tile     = half_tile_cache[quant_group];
-        assembled_stream_data = {FULL_TILE_BITS{1'b0}};
-        for (idx_ch = 0; idx_ch < 4; idx_ch = idx_ch + 1) begin
-            // 每个通道 128bit：
-            //   低 64bit  = 上半 2x4（上一 pos 缓存）
-            //   高 64bit  = 下半 2x4（当前 pos 新算结果）
-            assembled_stream_data[idx_ch*128 +: 64]      = cached_half_tile[idx_ch*64 +: 64];
-            assembled_stream_data[idx_ch*128 + 64 +: 64] = quant_data[idx_ch*64 +: 64];
-        end
-    end
+    // always @(*) begin
+    //     cached_half_tile     = half_tile_cache[quant_group];
+    //     assembled_stream_data = {FULL_TILE_BITS{1'b0}};
+    //     for (idx_ch = 0; idx_ch < 4; idx_ch = idx_ch + 1) begin
+    //         // 每个通道 128bit：
+    //         //   低 64bit  = 上半 2x4（上一 pos 缓存）
+    //         //   高 64bit  = 下半 2x4（当前 pos 新算结果）
+    //         assembled_stream_data[idx_ch*128 +: 64]      = cached_half_tile[idx_ch*64 +: 64];
+    //         assembled_stream_data[idx_ch*128 + 64 +: 64] = quant_data[idx_ch*64 +: 64];
+    //     end
+    // end
 
     // 三段式状态机第一段：状态更新
     always @(posedge clk or negedge rst_n) begin
@@ -356,12 +348,19 @@ module conv_core #(
 
                 BUSY: begin
                     stream_valid_reg <= stream_capture;
+                    // 只有 pos > 0 , stream_cpature 才能为 1 , 目的就是不影响下层以及 testbench
                     stream_last_reg  <= quant_last && (quant_pos > 4'd0);
                     // 这里的减 4'd1 是为了不影响下级流水做出的重要操作，下级的 pos=0 仍然为第一个有效 pos 的语义
                     stream_pos_reg   <= quant_pos - 4'd1;
                     stream_group_reg <= quant_group;
                     if (stream_capture) begin
-                        stream_data_reg <= assembled_stream_data;  // 从拼接的完整窗口取数据
+                        for (idx_ch = 0; idx_ch < 4; idx_ch = idx_ch + 1) begin
+                            // 每个通道 128bit：
+                            //   低 64bit  = 上半 2x4（上一 pos 缓存）
+                            //   高 64bit  = 下半 2x4（当前 pos 新算结果）
+                            stream_data_reg[idx_ch*128 +: 64]      <= half_tile_cache[quant_group][idx_ch*64 +: 64];
+                            stream_data_reg[idx_ch*128 + 64 +: 64] <= quant_data[idx_ch*64 +: 64];
+                        end
                     end
                 end
 
@@ -377,20 +376,28 @@ module conv_core #(
     conv_tile_mac u_conv_tile_mac (
         .clk(clk),
         .rst_n(rst_n),
-        .in_valid(stage0_valid),
-        .in_last(stage0_last),
-        .in_pos(stage0_pos),
-        .in_group(stage0_group),
-        .in_fire(issue_fire),
-        .pos_window_data(pos_window_data),
-        .weight_data_bus(weight_data_bus),
-        .bias_data_bus(bias_data_bus),
-        .out_valid(tile_valid),
-        .out_last(tile_last),
-        .out_pos(tile_pos),
-        .out_group(tile_group),
-        .out_fire(tile_fire),
-        .out_accum_bus(tile_accum_bus)
+
+        // ---------- 输入元数据 ----------
+        .in_valid(stage0_valid),      // in: 输入元数据: 有效
+        .in_last(stage0_last),        // in: 输入元数据: 最后一个 token
+        .in_pos(stage0_pos),          // in: 输入元数据: pos 编号(0~9, 0为预热建立工作集)
+        .in_group(stage0_group),      // in: 输入元数据: group 编号
+        .in_fire(issue_fire),         // in: 输入元数据: 夏优启动信号
+
+        // ---------- 输入数据 ----------
+        .pos_window_data(pos_window_data), // in: 输入数据: 当前 pos 的 14 行工作集
+
+        // ---------- 权重和偏置 ----------
+        .weight_data_bus(weight_data_bus), // in: 权重数据总线: 当前 group 的 11 条 kernel row
+        .bias_data_bus(bias_data_bus),     // in: 偏置数据总线: 当前 group 的 4 条 bias
+
+        // ---------- 输出半窗数据和元数据 ----------
+        .out_valid(tile_valid),         // out: 输出元数据: 有效
+        .out_last(tile_last),           // out: 输出元数据: 最后一个半窗
+        .out_pos(tile_pos),             // out: 输出元数据: pos 编号
+        .out_group(tile_group),         // out: 输出元数据: group 编号
+        .out_fire(tile_fire),           // out: 输出元数据: 第二层启动信号
+        .out_accum_bus(tile_accum_bus)  // out: 输出数据: 4ch x 2row x 4col 的 INT32 半窗累加结果
     );
 
     // 量化阶段也改成半窗 2x4。
@@ -402,24 +409,28 @@ module conv_core #(
     ) u_conv_rescale_relu (
         .clk(clk),
         .rst_n(rst_n),
-        .in_valid(tile_valid),
-        .in_last(tile_last),
-        .in_pos(tile_pos),
-        .in_group(tile_group),
-        .in_fire(tile_fire),
-        .in_data_bus(tile_accum_bus),
-        .out_valid(quant_valid),
-        .out_last(quant_last),
-        .out_pos(quant_pos),
-        .out_group(quant_group),
-        .out_fire(quant_fire),
-        .out_data_bus(quant_data)
+
+        // ---------- 输入半窗数据和元数据 ----------
+        .in_valid(tile_valid),         // in: 输入元数据: 有效 
+        .in_last(tile_last),           // in: 输入元数据: 最后一个半窗
+        .in_pos(tile_pos),             // in: 输入元数据: pos 编号，0~9, 0为预热建立工作集
+        .in_group(tile_group),         // in: 输入元数据: group 编号
+        .in_fire(tile_fire),           // in: 输入元数据: 第二层启动信号
+        .in_data_bus(tile_accum_bus),  // in: 输入数据总线: 4ch x 2row x 4col 的 INT32 半窗累加结果
+
+        // ---------- 输出半窗数据和元数据 ----------
+        .out_valid(quant_valid),       // out: 输出元数据: 有效
+        .out_last(quant_last),         // out: 输出元数据: 最后一个半窗
+        .out_pos(quant_pos),           // out: 输出元数据: pos 编号，0~9, 0为预热建立工作集
+        .out_group(quant_group),       // out: 输出元数据: group 编号
+        .out_fire(quant_fire),         // out: 输出元数据: 第二维启动信号
+        .out_data_bus(quant_data)      // out: 输出数据总线: 4ch x 2row x 4col 的 8bit 量化半窗结果
     );
 
-    assign out_stream_valid = stream_valid_now;
-    assign out_stream_last  = stream_last_now;
-    assign out_stream_pos   = stream_pos_now;
-    assign out_stream_group = stream_group_now;
+    assign out_stream_valid = stream_valid_reg;
+    assign out_stream_last  = stream_last_reg;
+    assign out_stream_pos   = stream_pos_reg;
+    assign out_stream_group = stream_group_reg;
     assign out_stream_fire  = stream_capture;
     assign out_stream_data  = stream_data_reg;
 

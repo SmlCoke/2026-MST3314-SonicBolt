@@ -1,8 +1,16 @@
 `timescale 1ns / 1ps
 /*
  * 模块名称: pwconv_tile_mac_reduce8_cell
+ * 作者: SonicBolt 团队
+ * 日期: 2026-04-12
+ * 版本: v1.2
+ *
  * 功能:
  *   对单个输出位置执行 8 路 INT18 部分和归约，输出 INT21。
+ *
+ * 运算复杂度分析: 
+ *   - 三级加法树，8 x INT18 -> 1 x INT21
+ *   - 逻辑深度为: 3A 
  */
 module pwconv_tile_mac_reduce8_cell (
     input  wire signed [17:0] partial_0,

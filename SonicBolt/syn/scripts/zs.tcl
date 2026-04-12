@@ -6,26 +6,19 @@ set search_path "$search_path ../rtl/cnn ../rtl/cnn/conv ../rtl/cnn/dwconv ../rt
 
 # Standard cell + IO + SRAM macro timing libraries
 # If you run worst-case timing closure, replace *_tt_1.8_25.lib with *_ss_1.62_125.lib.
-set target_lib "slow.lib SP018W_V1p8_max.lib S018V3EBCDSP_X8Y4D64_PR_tt_1.8_25.lib S018V3EBCDSP_X8Y4D80_PR_tt_1.8_25.lib S018V3EBCDSP_X8Y4D96_PR_tt_1.8_25.lib S018V3EBCDSP_X8Y4D112_PR_tt_1.8_25.lib S018V3EBCDSP_X8Y4D128_PR_tt_1.8_25.lib"
+set target_lib "slow.lib SP018W_V1p8_max.lib S018V3EBCDSP_X8Y4D64_PR_tt_1.8_25.lib S018V3EBCDSP_X8Y4D80_PR_tt_1.8_25.lib S018V3EBCDSP_X8Y4D96_PR_tt_1.8_25.lib S018V3EBCDSP_X8Y4D112_PR_tt_1.8_25.lib S018V3EBCDSP_X8Y4D128_PR_tt_1.8_25.lib S018V3EBCDSP_X20Y4D64_PR_tt_1.8_25.lib S018V3EBCDSP_X64Y4D32_PR_tt_1.8_25.lib"
 
-set link_priority "* slow SP018W_V1p8_max S018V3EBCDSP_X8Y4D64_PR_tt_1.8_25 S018V3EBCDSP_X8Y4D80_PR_tt_1.8_25 S018V3EBCDSP_X8Y4D96_PR_tt_1.8_25 S018V3EBCDSP_X8Y4D112_PR_tt_1.8_25 S018V3EBCDSP_X8Y4D128_PR_tt_1.8_25"
-
-# Read SRAM macro Verilog models (place these files under ../rtl/cnn/utils)
-# read_design -format verilog ../rtl/cnn/utils/S018V3EBCDSP_X8Y4D64_PR.v
-# read_design -format verilog ../rtl/cnn/utils/S018V3EBCDSP_X8Y4D80_PR.v
-# read_design -format verilog ../rtl/cnn/utils/S018V3EBCDSP_X8Y4D96_PR.v
-# read_design -format verilog ../rtl/cnn/utils/S018V3EBCDSP_X8Y4D112_PR.v
-# read_design -format verilog ../rtl/cnn/utils/S018V3EBCDSP_X8Y4D128_PR.v
+set link_priority "* slow SP018W_V1p8_max S018V3EBCDSP_X8Y4D64_PR_tt_1.8_25 S018V3EBCDSP_X8Y4D80_PR_tt_1.8_25 S018V3EBCDSP_X8Y4D96_PR_tt_1.8_25 S018V3EBCDSP_X8Y4D112_PR_tt_1.8_25 S018V3EBCDSP_X8Y4D128_PR_tt_1.8_25 S018V3EBCDSP_X20Y4D64_PR_tt_1.8_25 S018V3EBCDSP_X64Y4D32_PR_tt_1.8_25"
 
 # Read CNN RTL files (place these files under ../rtl/cnn with below structure)
 read_design -format verilog ../rtl/cnn/utils/bias_pipe.v
 read_design -format verilog ../rtl/cnn/utils/meta_pipe.v
+read_design -format verilog ../rtl/cnn/utils/mult_cell.v
 read_design -format verilog ../rtl/cnn/utils/relu_saturate.v
 read_design -format verilog ../rtl/cnn/utils/rescale.v
 read_design -format verilog ../rtl/cnn/utils/rescale_relu.v
 read_design -format verilog ../rtl/cnn/utils/sram_sp.v
 
-read_design -format verilog ../rtl/cnn/conv/conv_tile_mac_dot7_cell.v
 read_design -format verilog ../rtl/cnn/conv/conv_tile_mac_reduce11_stage1_cell.v
 read_design -format verilog ../rtl/cnn/conv/conv_tile_mac_reduce11_stage2_cell.v
 read_design -format verilog ../rtl/cnn/conv/conv_tile_mac_row_mult.v
@@ -44,7 +37,6 @@ read_design -format verilog ../rtl/cnn/dwconv/dwconv_core.v
 read_design -format verilog ../rtl/cnn/dwconv/dwconv_param_store.v
 read_design -format verilog ../rtl/cnn/dwconv/dwconv_subsystem.v
 
-read_design -format verilog ../rtl/cnn/pwconv/pwconv_tile_mac_dot4_cell.v
 read_design -format verilog ../rtl/cnn/pwconv/pwconv_tile_mac_reduce8_cell.v
 read_design -format verilog ../rtl/cnn/pwconv/pwconv_tile_mac_bank_mult.v
 read_design -format verilog ../rtl/cnn/pwconv/pwconv_tile_mac_bank_accum.v
@@ -73,11 +65,7 @@ read_design -format verilog ../rtl/cnn/cnn_chip.v
 set current_design cnn_chip
 
 link_design
-# NOTE:
-#   ZenSyn currently may trigger an internal crash in constant-cleanup passes
-#   on this project after make_unique + hierarchical optimize.
-#   Keep make_unique disabled in this flow for tool stability.
-# make_unique
+make_unique
 
 # Read Timing Constraint
 source ../scripts/cnn.sdc

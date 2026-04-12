@@ -2,7 +2,7 @@
 /*
  * 模块名称: dwconv_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-04-02
+ * 日期: 2026-04-12
  * 版本: v1.1
  *
  * 功能概述: 基于 pos-major 数据流的 DWConv 子系统顶层
@@ -14,6 +14,7 @@
  *   - 由独立的 dwconv_param_store 管理 DWConv 整层参数。
  *   - 当前组织为 3 个 weight bank + 1 个 bias bank。
  *   - 运行时只按 group 读取其中一部分切片。
+ *
  * 版本定位:
  *   - 本模块只实现 DWConv 层，参数存储语义已经固定为“层内完整参数 SRAM”。
  *   - 本模块内部保存的是 DWConv 整层的全部权重和全部偏置，不是“当前这次推理临时需要的参数”。

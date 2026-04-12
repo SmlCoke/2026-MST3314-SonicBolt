@@ -54,8 +54,12 @@ DWCONV_MAIN_V_PATH = "SonicBolt/src/dwconv/dwconv_subsystem.v"
 PWCONV_README_PATH = "SonicBolt/src/pwconv/docs/README.md"
 PWCONV_MAIN_V_PATH = "SonicBolt/src/pwconv/pwconv_subsystem.v"
 
-Post_README_PATH = "SonicBolt/src/post_process/docs/README.md"
-Post_MAIN_V_PATH = "SonicBolt/src/post_process/post_process_subsystem.v"
+POST_README_PATH = "SonicBolt/src/post_process/docs/README.md"
+POST_MAIN_V_PATH = "SonicBolt/src/post_process/post_process_subsystem.v"
+
+CNN_README_PATH = "SonicBolt/README.md"
+PROJECT_README_PATH = "README.md"
+
 def get_line(file_path, line_number):
     """获取指定文件的特定行（行号从1开始）"""
     if not os.path.exists(file_path):
@@ -81,30 +85,46 @@ def extract_version(text, file_path, line_number):
 def check_version_consistency():
     print("⏳ 正在执行 pre-commit 检查：验证版本号一致性...")
 
+    # 获取 Conv 层顶层子系统的版本号行
     conv_readme_line = get_line(CONV_README_PATH, 3)
     conv_main_line = get_line(CONV_MAIN_V_PATH, 6)
 
+    # 获取 DWConv 层顶层子系统的版本号行
     dwconv_readme_line = get_line(DWCONV_README_PATH, 3)
     dwconv_main_line = get_line(DWCONV_MAIN_V_PATH, 6)
 
+    # 获取 PWConv 层顶层子系统的版本号行
     pwconv_readme_line = get_line(PWCONV_README_PATH, 3)
     pwconv_main_line = get_line(PWCONV_MAIN_V_PATH, 6)
 
-    post_readme_line = get_line(Post_README_PATH, 3)
-    post_main_line = get_line(Post_MAIN_V_PATH, 6)
+    # 获取 Post-Process 层顶层子系统的版本号行
+    post_readme_line = get_line(POST_README_PATH, 3)
+    post_main_line = get_line(POST_MAIN_V_PATH, 6)
 
+    # 获取 Conv 层子系统版本号
     conv_readme_version = extract_version(conv_readme_line, CONV_README_PATH, 3)
     conv_main_version = extract_version(conv_main_line, CONV_MAIN_V_PATH, 6)
 
+    # 获取 DWConv 层子系统版本号
     dwconv_readme_version = extract_version(dwconv_readme_line, DWCONV_README_PATH, 3)
     dwconv_main_version = extract_version(dwconv_main_line, DWCONV_MAIN_V_PATH, 6)
 
+    # 获取 PWConv 层子系统版本号
     pwconv_readme_version = extract_version(pwconv_readme_line, PWCONV_README_PATH, 3)
     pwconv_main_version = extract_version(pwconv_main_line, PWCONV_MAIN_V_PATH, 6)
 
-    post_readme_version = extract_version(post_readme_line, Post_README_PATH, 3)
-    post_main_version = extract_version(post_main_line, Post_MAIN_V_PATH, 6)
+    # 获取 Post-Process 层子系统版本号
+    post_readme_version = extract_version(post_readme_line, POST_README_PATH, 3)
+    post_main_version = extract_version(post_main_line, POST_MAIN_V_PATH, 6)
 
+    # 检查项目 README 指定的 CNN 系统版本号与 CNN README.md 中的版本号是否一致
+    cnn_readme_line = get_line(CNN_README_PATH, 3)
+    project_readme_line = get_line(PROJECT_README_PATH, 6)
+    cnn_readme_version = extract_version(cnn_readme_line, CNN_README_PATH, 3)
+    project_readme_version = extract_version(project_readme_line, PROJECT_README_PATH, 6)
+
+
+    # ---------- 检查各组版本号是否一致 ----------
     if conv_readme_version != conv_main_version:
         print("\n🚫 Commit 被拒绝！版本号不匹配！")
         print(f"📄 {CONV_README_PATH} 第 3 行版本: '{conv_readme_version}'")
@@ -128,11 +148,18 @@ def check_version_consistency():
 
     if post_readme_version != post_main_version:
         print("\n🚫 Commit 被拒绝！版本号不匹配！")
-        print(f"📄 {Post_README_PATH} 第 3 行版本: '{post_readme_version}'")
-        print(f"📄 {Post_MAIN_V_PATH} 第 6 行版本: '{post_main_version}'")
+        print(f"📄 {POST_README_PATH} 第 3 行版本: '{post_readme_version}'")
+        print(f"📄 {POST_MAIN_V_PATH} 第 6 行版本: '{post_main_version}'")
         print("💡 请修改对齐后再重新执行 git commit。")
         sys.exit(1)
 
+    if cnn_readme_version != project_readme_version:
+        print("\n🚫 Commit 被拒绝！版本号不匹配！")
+        print(f"📄 {CNN_README_PATH} 第 3 行版本: '{cnn_readme_version}'")
+        print(f"📄 {PROJECT_README_PATH} 第 6 行版本: '{project_readme_version}'")
+        print("💡 请修改对齐后再重新执行 git commit。")
+        sys.exit(1)
+        
     print("✅ 版本号校验通过。")
 
 # ========== 新增：检查 staged 的 .v 文件日期 ==========
