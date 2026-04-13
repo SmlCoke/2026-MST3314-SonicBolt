@@ -2,8 +2,8 @@
 /*
  * 模块名称: cnn
  * 作者: SonicBolt 团队
- * 日期: 2026-04-12
- * 版本: v1.4
+ * 日期: 2026-04-13
+ * 版本: v1.5
  *
  * 功能概述:
  *   SonicBolt 顶层 CNN 管线，依次串接:
@@ -19,6 +19,9 @@
  *       进入安全尾段时重新拉起下一帧。
  *   - v1.4 将 Conv 输出修改为半窗缓存，砍掉一半乘法器（2464个INT8）和一半加法树（32组四级加法树），同时元数据
  *     语义只在 Conv 层之间发生变动，通过还原机制使得 DWConv 层及之后元数据语义维持不变。
+ *   - v1.5 删除 pwconv 引入的 launch_safe 信号，改为在顶层 conv_guard_done 保护窗结束时允许下一帧启动。根
+ *      据经验回归结果，conv_guard_done 保护窗设置为 7 个周期，可以稳定通过多样本连续仿真测试，并且最大程度压
+ *      缩帧间隔以提升吞吐。
  *     
 
  */
@@ -100,6 +103,7 @@ module cnn #(
     // 三个卷积层与后处理层状态信号
     wire         conv_busy;
     wire         conv_done;
+    wire         conv_issue_done;
     wire         dwconv_busy;
     wire         dwconv_done;
     wire         pwconv_busy;
@@ -134,35 +138,51 @@ module cnn #(
     // Post-Process 子系统输出数据流
     wire         post_process_out_stream_valid;
     wire [63:0]  post_process_out_stream_data;
-    wire         conv_start_req;            // 真正送给 Conv 的启动脉冲
-    wire         conv_launch_ready;         // 当前允许 Conv 拉起下一帧
-    wire         pwconv_launch_safe;        // PWConv 已经进入可提前发起下一帧的安全区间
+    wire         conv_start_req;            // 当前允许 Conv 拉起下一帧
 
+    wire         conv_guard_done;           // Conv issue_done 之后的保护窗是否已结束
     reg          run_enable;                // start 后进入连续推理模式
-    reg          relaunch_pending;          // 当前已有待发车帧，等待 Conv / DWConv 准备好且 PWConv 进入安全区间
+    reg          relaunch_pending;          // 当前已有待发车帧，等待 Conv 前端准备好
+    reg  [3:0]   conv_relaunch_guard;       // issue_done 之后的固定保护窗计数器
 
-    // 只要 Conv 本身空闲，且 DWConv 已能接收下一次 fire，同时 PWConv 已经进入安全尾段，
-    // 就允许把待发车帧正式送入 Conv；这样比等待 PWConv 完全 done 更早。
-    assign conv_launch_ready = !conv_busy && !dwconv_busy && pwconv_launch_safe;
-    assign conv_start_req    = relaunch_pending && conv_launch_ready;
+    // 经验回归结果：
+    // - 保护窗 = 6 时，多样本连续仿真会串帧
+    // - 保护窗 = 7 时，`run_cnn_test_tb.py` / `run_cnn_sim_tb.py` 均稳定通过
+    // 因此这里取当前验证到的最小稳定值 7 ，把启动间隔压到 89 个周期。
+    localparam integer CONV_RELAUNCH_GUARD = 7;
+
+    // 当前版本将“Conv 最后一个输出流出”和“Conv 前端 80 个 token 发完”拆开：
+    // - Conv 前端 issue 侧空闲，说明输入缓存 / 参数读口已经可以接下一帧
+    // - 再额外保留一小段固定保护窗，让下一帧首个 fire 到达 PWConv / Post-Process 时，
+    //   上一帧已经越过单帧语义的危险边界。
+    assign conv_guard_done   = (conv_relaunch_guard == 4'd0);
+    assign conv_start_req = !conv_busy && conv_guard_done;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             run_enable       <= 1'b0;
             relaunch_pending <= 1'b0;
+            conv_relaunch_guard <= 4'd0;
         end else begin
-            // Conv 一旦真正进入 busy，说明当前待发车帧已经被接收，清掉 pending。
-            if (conv_busy) begin
-                relaunch_pending <= 1'b0;
+            if (conv_issue_done) begin
+                // issue 侧虽然已经空出来了，但下一帧过早启动会让更深层的单帧模块串帧。
+                // 因此这里在 issue_done 之后保留一个小保护窗，再允许真正 launch。
+                conv_relaunch_guard <= CONV_RELAUNCH_GUARD[3:0];
+            end else if (conv_relaunch_guard != 4'd0) begin
+                conv_relaunch_guard <= conv_relaunch_guard - 4'd1;
             end
 
             // 第一次 start 用来进入连续运行模式；
-            // 之后每次整帧 conv_done，都自动申请拉起下一帧。
+            // 之后每次 Conv 前端 80 个 token 发完，就自动申请拉起下一帧。
             if (start) begin
                 run_enable       <= 1'b1;
                 relaunch_pending <= 1'b1;
-            end else if (run_enable && conv_done) begin
+            end else if (run_enable && conv_issue_done) begin
+                // 每当 Conv 前端发完当前帧的 80 个 token，就申请拉起下一帧(pending = 1)。真正的拉起时机由 conv_start_req 决定，以确保不会串帧。
                 relaunch_pending <= 1'b1;
+            end else if (conv_busy) begin
+                // Conv 一旦真正进入 busy，说明当前待发车帧已经被接收，清掉 pending。
+                relaunch_pending <= 1'b0;
             end
         end
     end
@@ -179,6 +199,7 @@ module cnn #(
         .start(conv_start_req),
         .busy(conv_busy),
         .done(conv_done),
+        .issue_done(conv_issue_done),
 
         // ---------- 输入数据流接口 ----------
         .img_wr_en(img_wr_en),
@@ -256,7 +277,6 @@ module cnn #(
         .rst_n(rst_n),
         .busy(pwconv_busy),
         .done(pwconv_done),
-        .launch_safe(pwconv_launch_safe),
 
         // ---------- PWConv 输入数据流接口 ----------
         .in_stream_valid(dwconv_out_stream_valid),

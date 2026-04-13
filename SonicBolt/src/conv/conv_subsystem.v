@@ -2,7 +2,7 @@
 /*
  * 模块名称: conv_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-04-12
+ * 日期: 2026-04-13
  * 版本: v2.7
  *
  * 功能概述:
@@ -33,8 +33,9 @@ module conv_subsystem #(
     input  wire          clk,              // 时钟
     input  wire          rst_n,            // 低有效复位
     input  wire          start,            // 启动一次新图计算
-    output wire          busy,             // 高电平表示 Conv 正在处理当前图
-    output wire          done,             // 单拍完成脉冲
+    output wire          busy,             // 高电平表示 Conv 前端 80 个计算 token 尚未发完
+    output wire          done,             // 单拍完成脉冲，表示当前帧最后一个输出 tile 已流出
+    output wire          issue_done,       // 单拍完成脉冲，表示当前帧 80 个计算 token 已全部发完
 
     // ------------ 输入图像写控制信号 ------------
     input  wire          img_wr_en,        // 输入图像写使能
@@ -86,7 +87,7 @@ module conv_subsystem #(
     wire          tile_last_int;           // Conv 输出元数据：有效
     wire [3:0]    tile_pos_int;            // Conv 输出元数据：位置
     wire [2:0]    tile_group_int;          // Conv 输出元数据：通道组  
-    wire             tile_fire_int;        // Conv 输出的第二层启动提示信号
+    wire          tile_fire_int;           // Conv 输出的第二层启动提示信号
     wire [511:0]  tile_data_int;           // Conv 输出数据：量化后的 tile 数据 
 
     // ---------- Ping-Pong 输入缓存控制 ----------
@@ -94,13 +95,12 @@ module conv_subsystem #(
     wire             img_wr_ready_int;     // 输入缓存内部生成的“可继续写下一帧”信号
     wire             consume_bank_sel;     // 本次启动时应消费的 ready bank
     wire             launch_start;         // 真正送给输入缓存和 conv_core 的启动脉冲
-    wire             core_busy_int;        // conv_core busy
-    wire             core_done_int;        // conv_core done
+
 
     // 计算过程中禁止覆盖当前层参数 SRAM；
     // 当启动脉冲拉高的这个拍，也一并禁止参数写入，避免与读通路发生冲突。
-    assign weight_store_wr_en = weight_wr_en && !core_busy_int && !launch_start;
-    assign bias_store_wr_en   = bias_wr_en && !core_busy_int && !launch_start;
+    assign weight_store_wr_en = weight_wr_en && !busy && !launch_start;
+    assign bias_store_wr_en   = bias_wr_en && !busy && !launch_start;
 
     // 当前策略下优先选择编号较小的 ready bank；
     // 由于 launch_start 已经要求 ready_bank_mask 非零，因此这里总能选出一个合法 bank。
@@ -108,10 +108,6 @@ module conv_subsystem #(
 
     // 只有至少有一帧完整输入准备好时，外部 start 才会真正启动 Conv。
     assign launch_start       = start && (|ready_bank_mask);
-
-    assign busy         = core_busy_int;
-    assign done         = core_done_int;
-    assign img_wr_ready = img_wr_ready_int;
 
     // 输入双帧缓存：
     // - 对外暴露逐行写接口
@@ -126,7 +122,7 @@ module conv_subsystem #(
         .img_wr_addr(img_wr_addr),                // in: 写入行地址             
         .img_wr_row_word(img_wr_row_data),        // in: 一行 10 个像素
         .img_wr_commit(img_wr_commit),            // in: 当前写入 Bank 的30行已经写完，可以被消费
-        .img_wr_ready(img_wr_ready_int),          // out:当前存在可写 bank                       
+        .img_wr_ready(img_wr_ready),          // out:当前存在可写 bank                       
 
         // ---------- 消费启动接口 ----------
         .start_consume(launch_start),             // in: 启动消费当前 SRAM 中的一张新图
@@ -183,8 +179,9 @@ module conv_subsystem #(
         .clk(clk),
         .rst_n(rst_n),
         .start(launch_start),                 // in: 启动一次新图计算
-        .busy(core_busy_int),                 // out: 高电平表示当前仍在处理本张图
-        .done(core_done_int),                 // out: 单拍完成脉冲
+        .busy(busy),                 // out: 高电平表示当前仍在处理本张图
+        .done(done),                 // out: 单拍完成脉冲
+        .issue_done(issue_done),     // out: 单拍完成脉冲，表示当前帧 80 个 token 已发完
 
         // ---------- 输入输入窗口握手接口 ----------
         .pos_req_valid(pos_req_valid),        // out: 向输入缓存请求一个新的 pos 窗口

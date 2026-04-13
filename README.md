@@ -3,7 +3,7 @@
 # ⚡️SonicBolt(声速闪电)
 **数字集成电路设计 · 高性能 CNN 加速器全流程设计**
 
-[![Version](https://img.shields.io/badge/Version-v5.4-blue.svg)]() [![Institution](https://img.shields.io/badge/Institution-SJTU-red.svg)](https://www.sjtu.edu.cn/) [![SmlCoke](https://img.shields.io/badge/SmlCoke-https://smlcoke.com-brightgreen.svg)](https://smlcoke.com) [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![Version](https://img.shields.io/badge/Version-v5.5-blue.svg)]() [![Institution](https://img.shields.io/badge/Institution-SJTU-red.svg)](https://www.sjtu.edu.cn/) [![SmlCoke](https://img.shields.io/badge/SmlCoke-https://smlcoke.com-brightgreen.svg)](https://smlcoke.com) [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 
 [项目简介](#i-项目简介) • [仓库结构](#ii-仓库结构) • [各模块说明](#iii-各模块说明) • [Quick Start](#iv-quick-start-guide) • [设计进度](#v-设计进度)
 
@@ -170,6 +170,7 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 - CNN-v1.1: SonicBolt v5.2，新增**输入 Ping-Pong 缓存机制**，实现流水线连续计算
 - CNN-v1.2: SonicBolt v5.3，将杂糅的状态转移逻辑重构为有限状态机写法，提升代码可读性和可维护性。
 - CNN-v1.3: SonicBolt v5.4，新增**半窗缓存机制**，将 Conv 层的计算降低一半，代价是迭代周期从 72 增加至 80 。
+- CNN-v1.4: SonicBolt v5.5，实现更激进的下一帧启动机制，在**控制逻辑复杂化程度较低**的情况下，将 Conv 层的迭代周期**从 103 进一步压缩至 89** ，成功实现了 $1000k fps$ 的性能指标。
 
 ---
 
@@ -231,5 +232,5 @@ python run_cnn_sim_tb.py --start-sample 0 --sample-count 496
 | RTL 设计 | Verilog 模块编写（SonicBolt） | ✅ 完成 |
 | 逻辑仿真 | Testbench 编写与功能验证 | ✅ 完成 |
 | 逻辑综合 | Design Compiler，时序/面积/功耗分析 | 🔲 进行中 |
-| 时序分析 | PrimeTime 时序签核 | 🔲 待开始 |
+| 时序分析 | PrimeTime 时序签核 | 🔲 进行中 |
 | 物理设计 | ICC/Encounter 布局布线，后仿真 | 🔲 待开始 |

@@ -2,7 +2,7 @@
 /*
  * 模块名称: conv_core
  * 作者: SonicBolt 团队
- * 日期: 2026-04-12
+ * 日期: 2026-04-13
  * 版本: v2.4
  *
  * 功能概述:
@@ -49,8 +49,9 @@ module conv_core #(
     input  wire          clk,
     input  wire          rst_n,
     input  wire          start,                    // 启动一次新图计算
-    output reg           busy,                     // 高电平表示当前仍在处理本张图
-    output reg           done,                     // 单拍完成脉冲
+    output reg           busy,                     // 高电平表示当前 80 个计算 token 尚未发完
+    output reg           done,                     // 单拍完成脉冲，表示当前帧最后一个输出 tile 已流出
+    output wire          issue_done,               // 单拍完成脉冲，表示当前帧 80 个计算 token 已全部发完
 
     // ---------- 输入图像交互接口 ----------
     output wire          pos_req_valid,            // 向输入缓存请求一个新的 pos 窗口
@@ -76,17 +77,16 @@ module conv_core #(
     output wire          out_stream_fire,          // 输出元数据：第二层启动信号
     output wire [511:0]  out_stream_data           // 输出数据：量化后的 4x4 tile(来自两个半窗拼接)
 );
-    parameter IDLE = 2'b00;
-    parameter BUSY = 2'b01;
-    parameter DONE = 2'b10;
+    parameter IDLE = 1'b0;
+    parameter BUSY = 1'b1;
 
     localparam integer POS_COUNT       = 10;            // pos = 0 是为了预先建立工作集，真正计算的 pos 是 1~9，共 9 个有效 pos
     localparam integer TOKEN_COUNT     = POS_COUNT * 8;
     localparam integer HALF_TILE_BITS  = 4 * 2 * 4 * 8;  // 4ch x 2row x 4col x 8bit = 256bit
     localparam integer FULL_TILE_BITS  = 4 * 4 * 4 * 8;  // 4ch x 4row x 4col x 8bit = 512bit
 
-    reg [1:0] current_state;
-    reg [1:0] next_state;
+    reg current_state;
+    reg next_state;
 
     // issue_* 记录下一个待发射 token 的坐标。
     reg  [3:0] issue_pos;
@@ -103,6 +103,7 @@ module conv_core #(
     reg  [HALF_TILE_BITS-1:0] half_tile_cache [0:7];
 
     wire       issue_fire;
+    wire       issue_last_fire;
     wire [6:0] next_issue_count;
     wire       req_init_pos;
     wire       req_next_pos;
@@ -139,8 +140,14 @@ module conv_core #(
     integer idx_group;
     integer idx_ch;
 
+    // 只有当当前工作集已经有效，且本图还有 token 未发完时，才能真正发射一个 token。 
     assign issue_fire       = busy && pos_window_valid && (issue_count < TOKEN_COUNT);
+    
+    // 最后一个 token 的发送信号
+    assign issue_last_fire  = issue_fire && (issue_count == TOKEN_COUNT - 1);
     assign next_issue_count = issue_count + 7'd1;
+    // 
+    assign issue_done       = issue_last_fire;
 
     // 第一个 token 之前，输入缓存内部还没有建立工作集，因此需要显式请求 pos=0。
     assign req_init_pos = busy && !pos_window_valid && (issue_count == 7'd0);
@@ -168,19 +175,6 @@ module conv_core #(
     // 帧级结束信号：当前 token 是有效的，并且是当前 pos 的最后一个 group。
     assign stream_frame_done = stream_valid_reg && stream_last_reg;
 
-    // 读取当前 group 对应的上一半窗缓存，并按通道拼成完整 4x4 tile。
-    // always @(*) begin
-    //     cached_half_tile     = half_tile_cache[quant_group];
-    //     assembled_stream_data = {FULL_TILE_BITS{1'b0}};
-    //     for (idx_ch = 0; idx_ch < 4; idx_ch = idx_ch + 1) begin
-    //         // 每个通道 128bit：
-    //         //   低 64bit  = 上半 2x4（上一 pos 缓存）
-    //         //   高 64bit  = 下半 2x4（当前 pos 新算结果）
-    //         assembled_stream_data[idx_ch*128 +: 64]      = cached_half_tile[idx_ch*64 +: 64];
-    //         assembled_stream_data[idx_ch*128 + 64 +: 64] = quant_data[idx_ch*64 +: 64];
-    //     end
-    // end
-
     // 三段式状态机第一段：状态更新
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -201,13 +195,11 @@ module conv_core #(
             end
 
             BUSY: begin
-                if (stream_frame_done) begin
-                    next_state = DONE;
+                // 一旦最后一个计算 token 成功发射，前端 issue 侧即可立刻回到 IDLE，
+                // 允许下一帧开始建立 pos=0 工作集；尾部输出仍由独立流水自然流完。
+                if (issue_last_fire) begin
+                    next_state = IDLE;
                 end
-            end
-
-            DONE: begin
-                next_state = IDLE;
             end
 
             default: begin
@@ -229,7 +221,9 @@ module conv_core #(
             stage0_pos   <= 4'd0;
             stage0_group <= 3'd0;
         end else begin
-            done <= 1'b0;
+            // done 继续保留“最后一个输出 tile 已流出”的旧语义；
+            // 这样对观察输出尾拍的上层逻辑保持兼容。
+            done <= stream_frame_done;
 
             case (current_state)
                 IDLE: begin
@@ -247,9 +241,13 @@ module conv_core #(
                 end
 
                 BUSY: begin
-                    busy         <= 1'b1;
+                    // 最后一个 token 发出后，busy = 0, 此时最后一个 token 已经送进流水线
+                    // 在此前，busy 一直为高
+                    busy         <= !issue_last_fire;
+
+                    // 元数据核心更新逻辑
                     stage0_valid <= issue_fire;
-                    stage0_last  <= issue_fire && (issue_count == TOKEN_COUNT - 1);
+                    stage0_last  <= issue_last_fire;
                     stage0_pos   <= issue_pos;
                     stage0_group <= issue_group;
                     
@@ -264,16 +262,6 @@ module conv_core #(
                         end
                     end
 
-                    if (stream_frame_done) begin
-                        busy <= 1'b0;
-                        done <= 1'b1;
-                    end
-                end
-
-                DONE: begin
-                    busy         <= 1'b0;
-                    stage0_valid <= 1'b0;
-                    stage0_last  <= 1'b0;
                 end
 
                 default: begin
@@ -285,41 +273,20 @@ module conv_core #(
         end
     end
 
-    // 三段式状态机第三段：半窗缓存寄存器更新，只保留上一 pos 的 2x4 结果，完整 4x4 通过组合拼接直接导出。
+    // 半窗缓存寄存器更新，只保留上一 pos 的 2x4 结果，完整 4x4 通过组合拼接直接导出。
+    // 注意：这里不能在新帧 start 时立即清零，因为上一帧尾部输出还可能在流水线中，仍然要读取旧缓存完成拼接。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (idx_group = 0; idx_group < 8; idx_group = idx_group + 1) begin
                 half_tile_cache[idx_group] <= {HALF_TILE_BITS{1'b0}};
             end
         end else begin
-            case (current_state)
-                IDLE: begin
-                    if (start) begin
-                        for (idx_group = 0; idx_group < 8; idx_group = idx_group + 1) begin
-                            half_tile_cache[idx_group] <= {HALF_TILE_BITS{1'b0}};
-                        end
-                    end
-                end
-
-                BUSY: begin
-                    if (quant_valid) begin
-                        // 先把当前 2x4 半窗写回缓存，供下一次相邻 pos 复用。
-                        half_tile_cache[quant_group] <= quant_data;
-                    end
-                end
-
-                DONE: begin
-                    for (idx_group = 0; idx_group < 8; idx_group = idx_group + 1) begin
-                        half_tile_cache[idx_group] <= {HALF_TILE_BITS{1'b0}};
-                    end
-                end
-
-                default: begin
-                    for (idx_group = 0; idx_group < 8; idx_group = idx_group + 1) begin
-                        half_tile_cache[idx_group] <= {HALF_TILE_BITS{1'b0}};
-                    end
-                end
-            endcase
+            if (quant_valid) begin
+                // 先把当前 2x4 半窗写回缓存，供下一次相邻 pos 复用。
+                // 不需要显式做“帧间清零”：
+                // 新帧同一 group 的 pos=0 半窗一定会先到，再覆盖掉旧帧残留值。
+                half_tile_cache[quant_group] <= quant_data;
+            end
         end
     end
 
@@ -335,39 +302,23 @@ module conv_core #(
             stream_group_reg <= 3'd0;
             stream_data_reg  <= {FULL_TILE_BITS{1'b0}};
         end else begin
-            case (current_state)
-                IDLE: begin
-                    if (start) begin
-                        stream_valid_reg <= 1'b0;
-                        stream_last_reg  <= 1'b0;
-                        stream_pos_reg   <= 4'd0;
-                        stream_group_reg <= 3'd0;
-                        stream_data_reg  <= {FULL_TILE_BITS{1'b0}};
-                    end
-                end
 
-                BUSY: begin
-                    stream_valid_reg <= stream_capture;
-                    // 只有 pos > 0 , stream_cpature 才能为 1 , 目的就是不影响下层以及 testbench
-                    stream_last_reg  <= quant_last && (quant_pos > 4'd0);
-                    // 这里的减 4'd1 是为了不影响下级流水做出的重要操作，下级的 pos=0 仍然为第一个有效 pos 的语义
-                    stream_pos_reg   <= quant_pos - 4'd1;
-                    stream_group_reg <= quant_group;
-                    if (stream_capture) begin
-                        for (idx_ch = 0; idx_ch < 4; idx_ch = idx_ch + 1) begin
-                            // 每个通道 128bit：
-                            //   低 64bit  = 上半 2x4（上一 pos 缓存）
-                            //   高 64bit  = 下半 2x4（当前 pos 新算结果）
-                            stream_data_reg[idx_ch*128 +: 64]      <= half_tile_cache[quant_group][idx_ch*64 +: 64];
-                            stream_data_reg[idx_ch*128 + 64 +: 64] <= quant_data[idx_ch*64 +: 64];
-                        end
-                    end
-                end
+            // 只有 pos > 0 , stream_capture 才能为 1 , 目的就是不影响下层以及 testbench
+            stream_valid_reg <= stream_capture;
+            stream_last_reg  <= quant_last && (quant_pos > 4'd0);
 
-                default: begin
-                
+            // 这里的减 4'd1 是为了不影响下级流水做出的重要操作，下级的 pos=0 仍然为第一个有效 pos 的语义
+            stream_pos_reg   <= quant_pos - 4'd1;
+            stream_group_reg <= quant_group;
+            if (stream_capture) begin
+                for (idx_ch = 0; idx_ch < 4; idx_ch = idx_ch + 1) begin
+                    // 每个通道 128bit：
+                    //   低 64bit  = 上半 2x4（上一 pos 缓存）
+                    //   高 64bit  = 下半 2x4（当前 pos 新算结果）
+                    stream_data_reg[idx_ch*128 +: 64]      <= half_tile_cache[quant_group][idx_ch*64 +: 64];
+                    stream_data_reg[idx_ch*128 + 64 +: 64] <= quant_data[idx_ch*64 +: 64];
                 end
-            endcase
+            end
         end
     end
 

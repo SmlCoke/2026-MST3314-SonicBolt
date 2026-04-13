@@ -1,6 +1,6 @@
  # PWConv 子系统架构说明
 
-> 当前系统所属版本：SonicBolt: PWConv v1.2
+> 当前系统所属版本：SonicBolt: PWConv v1.3
 
 ## I. 整体架构
 本子系统实现 CNN 加速器中 DWConv 层之后的逐点卷积（Pointwise Convolution）：即 $1\times 1$ 卷积、量化和 ReLU 激活。由于其输入往往在通道方向上具有很深特征，并且每个输出点的计算依赖所有通道同一位置的数据。
