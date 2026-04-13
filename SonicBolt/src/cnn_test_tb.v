@@ -2,8 +2,8 @@
 /*
  * 模块名称: cnn_test_tb
  * 作者: SonicBolt 团队
- * 日期: 2026-04-12
- * 版本: v1.4
+ * 日期: 2026-04-13
+ * 版本: v1.5
  *
  * 功能概述:
  *   面向整个 SonicBolt 系统的 testbench。
@@ -25,6 +25,7 @@
  *   - v1.2 级联了整个系统，仿真测试通过
  *   - v1.3 优化了输入Ping-Pong缓冲和启动机制
  *   - v1.4 增加了半窗缓存机制
+ *   - v1.5 移除了权重/偏置参数的SRAM写接口
  */
 
 module cnn_test_tb #(
@@ -224,8 +225,10 @@ module cnn_test_tb #(
     string fc_bias_mem_path;
     string sigmoid_lut_mem_path;
     string wave_file_path;
+    wire   legacy_img_wr_ready;
 
     // cnn 实例
+`ifdef TB_USE_CNN_WRITE_PORTS
     cnn #(
         .CONV_M0(111),
         .CONV_SHIFT_N(14),
@@ -281,6 +284,31 @@ module cnn_test_tb #(
         .out_stream_valid(out_stream_valid),
         .out_stream_data(out_stream_data)
     );
+`else
+    cnn #(
+        .CONV_M0(111),
+        .CONV_SHIFT_N(14),
+        .DWCONV_M0(59),
+        .DWCONV_SHIFT_N(11),
+        .PWCONV_M0(69),
+        .PWCONV_SHIFT_N(13),
+        .FC_M0(11),
+        .FC_SHIFT_N(15)
+    ) cnn_inst (
+        .clk(clk),
+        .rst_n(rst_n),
+        .start(start),
+        .busy(busy),
+        .done(done),
+        .img_wr_en(img_wr_en),
+        .img_wr_addr(img_wr_addr),
+        .img_wr_row_data(img_wr_row_word),
+        .img_wr_commit(img_wr_commit),
+        .img_wr_ready(img_wr_ready),
+        .out_stream_valid(out_stream_valid),
+        .out_stream_data(out_stream_data)
+    );
+`endif
 
     // hook: testbench 强制访问 Conv 层输出
     assign conv_out_stream_valid = cnn_inst.conv_inst.out_stream_valid;
@@ -466,6 +494,118 @@ module cnn_test_tb #(
             repeat (4) @(posedge clk);
             rst_n <= 1'b1;
             @(posedge clk);
+        end
+    endtask
+
+    task automatic write_conv_weight_word(input integer bank_idx, input integer addr_idx, input [223:0] word);
+        begin
+            case (bank_idx)
+                0: begin cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[0].u_weight_bank_lo.mem_array[addr_idx] = word[111:0];  cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[0].u_weight_bank_hi.mem_array[addr_idx] = word[223:112]; end
+                1: begin cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[1].u_weight_bank_lo.mem_array[addr_idx] = word[111:0];  cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[1].u_weight_bank_hi.mem_array[addr_idx] = word[223:112]; end
+                2: begin cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[2].u_weight_bank_lo.mem_array[addr_idx] = word[111:0];  cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[2].u_weight_bank_hi.mem_array[addr_idx] = word[223:112]; end
+                3: begin cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[3].u_weight_bank_lo.mem_array[addr_idx] = word[111:0];  cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[3].u_weight_bank_hi.mem_array[addr_idx] = word[223:112]; end
+                4: begin cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[4].u_weight_bank_lo.mem_array[addr_idx] = word[111:0];  cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[4].u_weight_bank_hi.mem_array[addr_idx] = word[223:112]; end
+                5: begin cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[5].u_weight_bank_lo.mem_array[addr_idx] = word[111:0];  cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[5].u_weight_bank_hi.mem_array[addr_idx] = word[223:112]; end
+                6: begin cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[6].u_weight_bank_lo.mem_array[addr_idx] = word[111:0];  cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[6].u_weight_bank_hi.mem_array[addr_idx] = word[223:112]; end
+                7: begin cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[7].u_weight_bank_lo.mem_array[addr_idx] = word[111:0];  cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[7].u_weight_bank_hi.mem_array[addr_idx] = word[223:112]; end
+                8: begin cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[8].u_weight_bank_lo.mem_array[addr_idx] = word[111:0];  cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[8].u_weight_bank_hi.mem_array[addr_idx] = word[223:112]; end
+                9: begin cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[9].u_weight_bank_lo.mem_array[addr_idx] = word[111:0];  cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[9].u_weight_bank_hi.mem_array[addr_idx] = word[223:112]; end
+                10: begin cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[10].u_weight_bank_lo.mem_array[addr_idx] = word[111:0]; cnn_inst.conv_inst.u_conv_param_store.g_weight_bank[10].u_weight_bank_hi.mem_array[addr_idx] = word[223:112]; end
+                default: begin end
+            endcase
+        end
+    endtask
+
+    task automatic write_dwconv_weight_word(input integer bank_idx, input integer addr_idx, input [95:0] word);
+        begin
+            case (bank_idx)
+                0: cnn_inst.dwconv_inst.u_dwconv_param_store.g_weight_bank[0].u_weight_bank.mem_array[addr_idx] = word;
+                1: cnn_inst.dwconv_inst.u_dwconv_param_store.g_weight_bank[1].u_weight_bank.mem_array[addr_idx] = word;
+                2: cnn_inst.dwconv_inst.u_dwconv_param_store.g_weight_bank[2].u_weight_bank.mem_array[addr_idx] = word;
+                default: begin end
+            endcase
+        end
+    endtask
+
+    task automatic write_pwconv_weight_word(input integer bank_idx, input integer addr_idx, input [127:0] word);
+        begin
+            case (bank_idx)
+                0: cnn_inst.pwconv_inst.u_pwconv_param_store.g_weight_bank[0].u_weight_bank.mem_array[addr_idx] = word;
+                1: cnn_inst.pwconv_inst.u_pwconv_param_store.g_weight_bank[1].u_weight_bank.mem_array[addr_idx] = word;
+                2: cnn_inst.pwconv_inst.u_pwconv_param_store.g_weight_bank[2].u_weight_bank.mem_array[addr_idx] = word;
+                3: cnn_inst.pwconv_inst.u_pwconv_param_store.g_weight_bank[3].u_weight_bank.mem_array[addr_idx] = word;
+                4: cnn_inst.pwconv_inst.u_pwconv_param_store.g_weight_bank[4].u_weight_bank.mem_array[addr_idx] = word;
+                5: cnn_inst.pwconv_inst.u_pwconv_param_store.g_weight_bank[5].u_weight_bank.mem_array[addr_idx] = word;
+                6: cnn_inst.pwconv_inst.u_pwconv_param_store.g_weight_bank[6].u_weight_bank.mem_array[addr_idx] = word;
+                7: cnn_inst.pwconv_inst.u_pwconv_param_store.g_weight_bank[7].u_weight_bank.mem_array[addr_idx] = word;
+                default: begin end
+            endcase
+        end
+    endtask
+
+    // 直接通过层级路径把整层参数写入内部 SRAM / 寄存器存储。
+    task automatic preload_parameter_stores;
+        begin
+            for (conv_weight_idx = 0; conv_weight_idx < CONV_WEIGHT_WORD_COUNT; conv_weight_idx = conv_weight_idx + 1) begin
+                write_conv_weight_word(conv_weight_idx / 8, conv_weight_idx % 8, conv_weight_words_mem[conv_weight_idx]);
+            end
+
+            for (conv_bias_idx = 0; conv_bias_idx < CONV_BIAS_WORD_COUNT; conv_bias_idx = conv_bias_idx + 1) begin
+                cnn_inst.conv_inst.u_conv_param_store.u_bias_bank.mem_array[conv_bias_idx] = conv_bias_words_mem[conv_bias_idx];
+            end
+
+            for (dwconv_weight_idx = 0; dwconv_weight_idx < DWCONV_WEIGHT_WORD_COUNT; dwconv_weight_idx = dwconv_weight_idx + 1) begin
+                write_dwconv_weight_word(dwconv_weight_idx / 8, dwconv_weight_idx % 8, dwconv_weight_words_mem[dwconv_weight_idx]);
+            end
+
+            for (dwconv_bias_idx = 0; dwconv_bias_idx < DWCONV_BIAS_WORD_COUNT; dwconv_bias_idx = dwconv_bias_idx + 1) begin
+                cnn_inst.dwconv_inst.u_dwconv_param_store.u_bias_bank.mem_array[dwconv_bias_idx] = dwconv_bias_words_mem[dwconv_bias_idx];
+            end
+
+            for (pwconv_weight_idx = 0; pwconv_weight_idx < PWCONV_WEIGHT_WORD_COUNT; pwconv_weight_idx = pwconv_weight_idx + 1) begin
+                write_pwconv_weight_word(pwconv_weight_idx / 8, pwconv_weight_idx % 8, pwconv_weight_words_mem[pwconv_weight_idx]);
+            end
+
+            for (pwconv_bias_idx = 0; pwconv_bias_idx < PWCONV_BIAS_WORD_COUNT; pwconv_bias_idx = pwconv_bias_idx + 1) begin
+                cnn_inst.pwconv_inst.u_pwconv_param_store.u_bias_bank.mem_array[pwconv_bias_idx] = pwconv_bias_words_mem[pwconv_bias_idx];
+            end
+
+            for (fc_weight_idx = 0; fc_weight_idx < FC_WEIGHT_WORD_COUNT; fc_weight_idx = fc_weight_idx + 1) begin
+                cnn_inst.post_process_inst.u_fc.u_fc_weight_sram.u_fc_weight_sram.mem_array[fc_weight_idx] = fc_weight_words_mem[fc_weight_idx];
+            end
+
+            cnn_inst.post_process_inst.u_fc.u_fc_bias_store.bias_mem[0] = fc_bias_words_mem[0][15:0];
+            cnn_inst.post_process_inst.u_fc.u_fc_bias_store.bias_mem[1] = fc_bias_words_mem[0][31:16];
+
+            for (sigmoid_lut_idx = 0; sigmoid_lut_idx < SIGMOID_LUT_WORD_COUNT; sigmoid_lut_idx = sigmoid_lut_idx + 1) begin
+                cnn_inst.post_process_inst.u_sigmoid.u_sigmoid_lut_sram.mem_array[sigmoid_lut_idx] = sigmoid_lut_words_mem[sigmoid_lut_idx];
+            end
+        end
+    endtask
+
+    // 直接把当前样本预装载到 Conv 输入 Ping-Pong SRAM 的空闲 bank 中。
+    task automatic preload_input_frame_to_idle_bank(input integer sample_id, input integer target_bank);
+        begin
+            for (row_idx = 0; row_idx < INPUT_ROW_COUNT; row_idx = row_idx + 1) begin
+                if (target_bank == 0) begin
+                    cnn_inst.conv_inst.u_conv_shared_input_buffer.u_frame_store_ping.mem_array[row_idx] = input_rows_mem[row_idx];
+                    if (row_idx < 14) begin
+                        cnn_inst.conv_inst.u_conv_shared_input_buffer.shadow_cache_ping[row_idx] = input_rows_mem[row_idx];
+                    end
+                end else begin
+                    cnn_inst.conv_inst.u_conv_shared_input_buffer.u_frame_store_pong.mem_array[row_idx] = input_rows_mem[row_idx];
+                    if (row_idx < 14) begin
+                        cnn_inst.conv_inst.u_conv_shared_input_buffer.shadow_cache_pong[row_idx] = input_rows_mem[row_idx];
+                    end
+                end
+            end
+
+            cnn_inst.conv_inst.u_conv_shared_input_buffer.ready_bank_mask = (target_bank == 0) ? 2'b01 : 2'b10;
+            cnn_inst.conv_inst.u_conv_shared_input_buffer.write_bank      = target_bank[0];
+            cnn_inst.conv_inst.u_conv_shared_input_buffer.active_bank     = ~target_bank[0];
+            cnn_inst.conv_inst.u_conv_shared_input_buffer.write_inflight  = 1'b0;
+
+            $display("INPUT_PRELOAD sample=%0d bank=%0d cycle=%0d", sample_id, target_bank, cycle_counter);
         end
     endtask
 
@@ -810,9 +950,7 @@ module cnn_test_tb #(
 
         load_memories();
         apply_reset();
-        load_weights();
-        load_bias();
-        load_sigmoid_lut();
+        preload_parameter_stores();
 
         for (sample_idx = 0; sample_idx < runtime_sample_count; sample_idx = sample_idx + 1) begin
             wait_img_wr_ready();

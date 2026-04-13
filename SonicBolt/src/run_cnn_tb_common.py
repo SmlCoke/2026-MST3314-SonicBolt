@@ -122,8 +122,6 @@ def run_prepare_function(
 def compile_testbench(tb_top: str, tb_file: Path, result_dir: Path) -> Path:
     """编译 CNN 全链路 RTL 与指定 testbench，返回生成的 vvp 路径。"""
     vvp_path = result_dir / f"{tb_top}.vvp"
-    compile_log = result_dir / "compile.log"
-    compile_err = result_dir / "compile_stderr.log"
     filelist_path = result_dir / "compile_filelist.f"
 
     source_paths = sorted(path.resolve() for path in CONV_DIR.glob("*.v"))
@@ -137,11 +135,26 @@ def compile_testbench(tb_top: str, tb_file: Path, result_dir: Path) -> Path:
     # Use filelist mode to avoid long-argument instability on Windows.
     source_files = [path.as_posix() for path in source_paths]
     filelist_path.write_text("\n".join(source_files) + "\n", encoding="utf-8")
-    cmd = ["iverilog", "-g2012", "-f", str(filelist_path), "-s", tb_top, "-o", str(vvp_path)]
-    result = run_cmd(cmd, cwd=ROOT_DIR, stdout_path=compile_log, stderr_path=compile_err)
-    if result.returncode != 0:
-        raise RuntimeError(f"iverilog compile failed, check {compile_log} / {compile_err}")
-    return vvp_path
+
+    compile_attempts = [
+        (["-DTB_USE_CNN_WRITE_PORTS"], "legacy_param_ports"),
+        ([], "direct_param_preload"),
+    ]
+
+    for extra_args, attempt_name in compile_attempts:
+        compile_log = result_dir / f"compile_{attempt_name}.log"
+        compile_err = result_dir / f"compile_{attempt_name}_stderr.log"
+        cmd = ["iverilog", "-g2012", *extra_args, "-f", str(filelist_path), "-s", tb_top, "-o", str(vvp_path)]
+        result = run_cmd(cmd, cwd=ROOT_DIR, stdout_path=compile_log, stderr_path=compile_err)
+        if result.returncode == 0:
+            shutil.copyfile(compile_log, result_dir / "compile.log")
+            shutil.copyfile(compile_err, result_dir / "compile_stderr.log")
+            (result_dir / "compile_variant.txt").write_text(f"{attempt_name}\n", encoding="utf-8")
+            return vvp_path
+
+    raise RuntimeError(
+        "iverilog compile failed, check compile_legacy_param_ports*.log / compile_direct_param_preload*.log"
+    )
 
 
 def run_vvp(
