@@ -2,8 +2,8 @@
 /*
  * 模块名称: fc_weight_sram
  * 作者: SonicBolt 团队
- * 日期: 2026-04-12
- * 版本: v1.1
+ * 日期: 2026-04-14
+ * 版本: v1.2
  *
  * 功能概述:
  *   - 封装 FC 权重 SRAM 的读写仲裁与实例化。
@@ -12,6 +12,7 @@
  * 版本定位:
  *  - v1.0: 基础功能实现，支持权重写入和读取
  *  - v1.1: 修复了 v1.0 的时序错误，确保下一个周期需要用到的参数这个周期生成地址信号
+ *  - v1.2 删除了所有 SRAM 写接口，改为在仿真测试时直接通过 $readmemh 初始化 SRAM 内容。
  */
 module fc_weight_sram #(
     parameter integer WEIGHT_DEPTH = 72
@@ -23,10 +24,6 @@ module fc_weight_sram #(
     input  wire        in_valid,
     input  wire [3:0]  in_pos,
     input  wire [2:0]  in_group,
-
-    input  wire        weight_wr_en,
-    input  wire [6:0]  weight_wr_addr,// 72 地址空间
-    input  wire [63:0] weight_wr_data,
 
     output wire [63:0] out_weight_rdata
 );
@@ -47,17 +44,15 @@ module fc_weight_sram #(
     assign prefetch_first_word = in_fire && !in_valid;
     assign prefetch_next_word  = in_valid && (token_addr != (WEIGHT_DEPTH - 1));
 
-    // 当外部正在写权重时，仍保持写优先，避免读写同拍冲突。
-    assign weight_sram_en   = weight_wr_en | prefetch_first_word | prefetch_next_word;
-    assign weight_sram_addr = weight_wr_en ? weight_wr_addr :
-                              (prefetch_first_word ? token_addr : next_token_addr);
+    assign weight_sram_en   = prefetch_first_word | prefetch_next_word;
+    assign weight_sram_addr = (prefetch_first_word ? token_addr : next_token_addr);
 
     S018V3EBCDSP_X20Y4D64_PR u_fc_weight_sram (
         .CLK(clk),
         .CEN(~weight_sram_en),
-        .WEN(~weight_wr_en),
+        .WEN(1'b1),
         .A(weight_sram_addr),
-        .D(weight_wr_data),
+        .D(64'b0),
         .Q(out_weight_rdata)
     );
 endmodule

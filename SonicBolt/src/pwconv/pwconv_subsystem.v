@@ -2,7 +2,7 @@
 /*
  * 模块名称: pwconv_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-04-13
+ * 日期: 2026-04-14
  * 版本: v1.3
  *
  * 功能概述:
@@ -34,18 +34,6 @@ module pwconv_subsystem #(
     input  wire          in_stream_last,   // 输入 tile 是否为最后一个
     input  wire [127:0]  in_stream_data,   // 输入 tile 数据，4 x 2 x 2 x 8bit = 128bit
 
-    // ------------ 权重 SRAM 写控制信号 ------------
-    input  wire          weight_wr_en,     // 权重写使能
-    input  wire [2:0]    weight_wr_bank,   // 权重 bank 编号，当前只使用 0..2
-    input  wire [2:0]    weight_wr_addr,   // 权重 group 地址，8 个 group 需要 3bit
-    input  wire [127:0]  weight_wr_data,   // 权重写数据，4 x 4 x 8bit = 128bit
-
-    // ------------ 偏置 SRAM 写控制信号 ------------
-    input  wire          bias_wr_en,       // 偏置写使能
-    input  wire          bias_wr_bank,     // 偏置 bank 编号，当前版本只使用 0
-    input  wire [2:0]    bias_wr_addr,     // 偏置 group 地址
-    input  wire [63:0]   bias_wr_data,     // 偏置写数据，4 x 16bit = 64bit
-
     // ---------- 输出数据流接口 ----------
     output wire          out_stream_valid, // 输出 tile 有效
     output wire          out_stream_last,  // 输出 tile 是否为最后一个 token
@@ -58,8 +46,6 @@ module pwconv_subsystem #(
     wire [1023:0] even_pos_data;
     wire [1023:0] odd_pos_data;
 
-    wire          weight_store_wr_en;      // 权重 SRAM 写使能 
-    wire          bias_store_wr_en;        // 偏置 SRAM 写使能 
     wire          capture_en;
 
     wire          weight_rd_en;            // 权重 SRAM 读使能
@@ -68,10 +54,6 @@ module pwconv_subsystem #(
     wire [2:0]    bias_rd_group;           // 偏置 SRAM 读地址
     wire [8*128-1:0] weight_data_bus;      // 权重 SRAM 读出数据总线
     wire [63:0]      bias_data_bus;        // 偏置 SRAM 读出数据总线
-
-    // 忙于计算当前图时，禁止覆盖本层参数 SRAM。
-    assign weight_store_wr_en = weight_wr_en && !busy;
-    assign bias_store_wr_en   = bias_wr_en && !busy;
 
     // 仅允许电路在工作状态(busy)并且输入数据有效(valid)时，写入数据到缓冲区
     assign capture_en         = busy && in_stream_valid;
@@ -94,18 +76,6 @@ module pwconv_subsystem #(
     pwconv_param_store u_pwconv_param_store (
         .clk(clk),
         .rst_n(rst_n),
-
-        // ------------ 权重 SRAM 写控制信号 ------------
-        .weight_wr_en(weight_store_wr_en),      // in: 权重写使能     
-        .weight_wr_bank(weight_wr_bank),        // in: 写入哪个weight bank，当前只使用 0..2
-        .weight_wr_addr(weight_wr_addr),        // in: 写入哪个 group 地址，8 个 group 需要 3bit 
-        .weight_wr_data(weight_wr_data),        // in: 权重写数据，4 x 4 x 8bit = 128bit 
-
-        // ------------ 偏置 SRAM 写控制信号 ------------
-        .bias_wr_en(bias_store_wr_en),          // in: 偏置写使能   
-        .bias_wr_bank(bias_wr_bank),            // in: 写入哪个bias bank，当前版本只允许 0 
-        .bias_wr_addr(bias_wr_addr),            // in: 写入哪个 group 地址 
-        .bias_wr_data(bias_wr_data),            // in: 偏置写数据，4 x 16bit = 64bit 
 
         // ------------ 权重 SRAM 读控制信号 ------------
         .weight_rd_en(weight_rd_en),            // in: 权重读使能  

@@ -2,8 +2,8 @@
 /*
  * 模块名称: post_process_sigmoid
  * 作者: SonicBolt 团队
- * 日期: 2026-04-12
- * 版本: v1.0
+ * 日期: 2026-04-14
+ * 版本: v1.1
  *
  * 功能概述:
  *   - 对 2 路 INT8 FC 输出执行 Sigmoid LUT 查表
@@ -14,6 +14,9 @@
  *   - x=-128 对应 8'h80，x=0 对应 8'h00，x=127 对应 8'h7f
  *   - LUT 通过在线写端口加载到 256x32 单端口 SRAM
  *   - 单端口 SRAM 读口一次只读一个地址：先读低 8 位地址，再读高 8 位地址
+ *
+ * 版本定位:
+ *   - v1.1 删除了所有 SRAM 写接口，改为在仿真测试时直接通过 $readmemh 初始化 SRAM 内容。
  */
 module post_process_sigmoid (
     input  wire        clk,
@@ -24,11 +27,6 @@ module post_process_sigmoid (
 
     // ---------- 输入数据 ----------
     input  wire [15:0] in_data_bus,
-
-    // ---------- LUT 写接口 ----------
-    input  wire        lut_wr_en,
-    input  wire [7:0]  lut_wr_addr,
-    input  wire [31:0] lut_wr_data,
 
     // ---------- 输出 valid ----------
     output wire        out_valid,
@@ -46,42 +44,34 @@ module post_process_sigmoid (
     reg [7:0]  req_addr1;        // 第二个 LUT 地址寄存器
     reg [31:0] first_lut_word;   // 第一个 LUT 读出的数据寄存器
 
-    // Sigmoid LUT 读写控制信号
+    // Sigmoid LUT 读控制信号
     wire        lut_sram_en;
-    wire        lut_sram_wr_en;
     wire [7:0]  lut_sram_addr;
-    wire [31:0] lut_sram_wdata;
     wire [31:0] lut_sram_rdata;
 
-    wire lut_write_cmd; // 写 LUT 命令
     wire lut_read0_cmd; // 读 LUT 的第 1 个地址
     wire lut_read1_cmd; // 读 LUT 的第 2 个地址
 
     reg [63:0] stage0_data_bus; // 将两次 LUT 读出的数据拼成完整的 FP32 输出
     reg        stage0_valid;
 
-    // 仅在 IDLE 状态且 lut_wr_en 有效时发出写命令；
-    assign lut_write_cmd = (rd_state == RD_IDLE) && lut_wr_en;
     // 仅在 IDLE 状态且 in_valid 有效时发出第 1 个读命令；
-    assign lut_read0_cmd = (rd_state == RD_IDLE) && in_valid && !lut_wr_en;
+    assign lut_read0_cmd = (rd_state == RD_IDLE) && in_valid;
     // 仅在 WAIT0 状态时发出第 2 个读命令；
     assign lut_read1_cmd = (rd_state == RD_WAIT0);
 
-    assign lut_sram_en    = lut_write_cmd || lut_read0_cmd || lut_read1_cmd;
-    assign lut_sram_wr_en = lut_write_cmd;
+    assign lut_sram_en    = lut_read0_cmd || lut_read1_cmd;
 
-    // LUT SRAM 地址构造：写命令时用 lut_wr_addr，读命令时先读低地址再读高地址。
-    assign lut_sram_addr  = lut_write_cmd ? lut_wr_addr :
-                            (lut_read0_cmd ? in_data_bus[7:0] :
+    // LUT SRAM 地址构造：先读低地址再读高地址。
+    assign lut_sram_addr  = (lut_read0_cmd ? in_data_bus[7:0] :
                             (lut_read1_cmd ? req_addr1 : 8'd0));
-    assign lut_sram_wdata = lut_wr_data;
 
     S018V3EBCDSP_X64Y4D32_PR u_sigmoid_lut_sram (
         .CLK(clk),
         .CEN(~lut_sram_en),
-        .WEN(~lut_sram_wr_en),
+        .WEN(1'b1),
         .A(lut_sram_addr),
-        .D(lut_sram_wdata),
+        .D(32'b0),
         .Q(lut_sram_rdata)
     );
 

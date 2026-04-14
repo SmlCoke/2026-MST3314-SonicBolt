@@ -2,8 +2,8 @@
 /*
  * 模块名称: dwconv_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-04-12
- * 版本: v1.1
+ * 日期: 2026-04-14
+ * 版本: v1.2
  *
  * 功能概述: 基于 pos-major 数据流的 DWConv 子系统顶层
  *
@@ -19,6 +19,7 @@
  *   - 本模块只实现 DWConv 层，参数存储语义已经固定为“层内完整参数 SRAM”。
  *   - 本模块内部保存的是 DWConv 整层的全部权重和全部偏置，不是“当前这次推理临时需要的参数”。
  *   - v1.1 修补bug: 补齐 fire 信号
+ *   - v1.2 删除了所有 SRAM 写接口，改为在仿真测试时直接通过 $readmemh 初始化 SRAM 内容。
  */
 module dwconv_subsystem #(
     parameter integer M0      = 59,
@@ -37,18 +38,6 @@ module dwconv_subsystem #(
     input wire           in_stream_fire,   // 第二层启动信号
     input wire [511:0]   in_stream_data,   // 输入 tile 数据，4 x 4 x 4 x 8bit = 512bit
 
-    // ------------ 权重 SRAM 写控制信号 ------------
-    input  wire          weight_wr_en,     // DWConv 权重写使能
-    input  wire [1:0]    weight_wr_bank,   // DWConv 权重 bank 编号，当前只使用 0..2
-    input  wire [2:0]    weight_wr_addr,   // DWConv 权重 group 地址，8 个 group 需要 3bit
-    input  wire [95:0]   weight_wr_data,   // 1 个权重 word = 4 x 3 x 8bit = 96bit
-
-    // ------------ 偏置 SRAM 写控制信号 ------------
-    input  wire          bias_wr_en,       // DWConv 偏置写使能
-    input  wire          bias_wr_bank,     // DWConv 偏置 bank 编号，当前版本只使用 0
-    input  wire [2:0]    bias_wr_addr,     // DWConv 偏置 group 地址
-    input  wire [63:0]   bias_wr_data,     // 1 个偏置 word = 4 x INT16 = 64bit
-
     // ------------ 输出数据流接口 ------------
     output wire          out_stream_valid, // 输出 tile 有效
     output wire          out_stream_fire,  // 输出的下一层启动信号
@@ -57,9 +46,6 @@ module dwconv_subsystem #(
     output wire [2:0]    out_stream_group, // 输出 tile 的 group 编号
     output wire [127:0]  out_stream_data   // 输出 tile 数据，4 x 2 x 2 x 8bit = 128bit
 );
-
-    wire          weight_store_wr_en;      // 权重 SRAM 写使能 
-    wire          bias_store_wr_en;        // 偏置 SRAM 写使能 
 
     wire          weight_rd_en;            // 权重 SRAM 读使能    
     wire [2:0]    weight_rd_group;         // 权重 SRAM 读地址    
@@ -77,28 +63,12 @@ module dwconv_subsystem #(
     wire [2:0]    tile_group_int;          // DWConv 输出元数据：通道组  
     wire [127:0]  tile_data_int;           // DWConv 输出数据：量化后的 tile 数据 
 
-    // 忙于计算当前图时，禁止覆盖本层参数 SRAM。
-    assign weight_store_wr_en = weight_wr_en && !busy;
-    assign bias_store_wr_en   = bias_wr_en && !busy;
-
     // 参数存储模块：
     // - 保存 DWConv 整层 3 个 kernel row bank + 1 个 bias bank
     // - 运行时按 group 输出当前 token 所需参数切片
     dwconv_param_store u_dwconv_param_store (
         .clk(clk),
         .rst_n(rst_n),
-
-        // ------------ 权重 SRAM 写控制信号 ------------
-        .weight_wr_en(weight_store_wr_en),  // in: 权重写使能   
-        .weight_wr_bank(weight_wr_bank),    // in: 写入哪个weight bank，当前只使用 0..2
-        .weight_wr_addr(weight_wr_addr),    // in: 写入哪个 group 地址，8 个 group 需要 3bit 
-        .weight_wr_data(weight_wr_data),    // in: 权重写数据，4 x 3 x 8bit = 96bit 
-
-        // ------------ 偏置 SRAM 写控制信号 ------------
-        .bias_wr_en(bias_store_wr_en),      // in: 偏置写使能
-        .bias_wr_bank(bias_wr_bank),        // in: 写入哪个bias bank，当前版本只允许 0
-        .bias_wr_addr(bias_wr_addr),        // in: 写入哪个 group 地址
-        .bias_wr_data(bias_wr_data),        // in: 偏置写数据，4 x 16bit = 64bit
 
         // ------------ 权重 SRAM 读控制信号 ------------
         .weight_rd_en(weight_rd_en),        // in: 权重读使能

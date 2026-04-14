@@ -2,7 +2,7 @@
 /*
  * 模块名称: cnn_sim_tb
  * 作者: SonicBolt Team
- * 日期: 2026-04-13
+ * 日期: 2026-04-14
  * 版本: v1.1
  *
  * 总结:
@@ -47,6 +47,8 @@ module cnn_sim_tb #(
     localparam integer FC_BIAS_WORD_COUNT       = 1;
     localparam integer SIGMOID_LUT_WORD_COUNT   = 256;
 
+    // 决定是否使用 CNN 模块的写端口加载权重和偏置。如果不使用，则预先将权重/偏置加载到 SRAM 模块中。
+
     // DUT 顶层控制和状态信号。
     reg clk;
     reg rst_n;
@@ -62,52 +64,6 @@ module cnn_sim_tb #(
     wire       img_wr_ready;
 
     // Conv 权重写入接口。
-    reg         conv_weight_wr_en;
-    reg [4:0]   conv_weight_wr_bank;
-    reg [2:0]   conv_weight_wr_addr;
-    reg [223:0] conv_weight_wr_data;
-
-    // Conv 偏置写入接口。
-    reg        conv_bias_wr_en;
-    reg        conv_bias_wr_bank;
-    reg [2:0]  conv_bias_wr_addr;
-    reg [63:0] conv_bias_wr_data;
-
-    // DWConv 权重写入接口。
-    reg        dwconv_weight_wr_en;
-    reg [1:0]  dwconv_weight_wr_bank;
-    reg [2:0]  dwconv_weight_wr_addr;
-    reg [95:0] dwconv_weight_wr_data;
-
-    // DWConv 偏置写入接口。
-    reg        dwconv_bias_wr_en;
-    reg        dwconv_bias_wr_bank;
-    reg [2:0]  dwconv_bias_wr_addr;
-    reg [63:0] dwconv_bias_wr_data;
-
-    // PWConv 权重写入接口。
-    reg         pwconv_weight_wr_en;
-    reg [2:0]   pwconv_weight_wr_bank;
-    reg [2:0]   pwconv_weight_wr_addr;
-    reg [127:0] pwconv_weight_wr_data;
-
-    // PWConv 偏置写入接口。
-    reg        pwconv_bias_wr_en;
-    reg        pwconv_bias_wr_bank;
-    reg [2:0]  pwconv_bias_wr_addr;
-    reg [63:0] pwconv_bias_wr_data;
-
-    // FC / Sigmoid 写入接口。
-    reg        fc_weight_wr_en;
-    reg [6:0]  fc_weight_wr_addr;
-    reg [63:0] fc_weight_wr_data;
-    reg        fc_bias_wr_en;
-    reg [31:0] fc_bias_wr_data;
-    reg        sigmoid_lut_wr_en;
-    reg [7:0]  sigmoid_lut_wr_addr;
-    reg [31:0] sigmoid_lut_wr_data;
-
-    // CNN 输出流。
     wire         out_stream_valid;
     wire [63:0]  out_stream_data;
 
@@ -158,66 +114,8 @@ module cnn_sim_tb #(
     string fc_bias_mem_path;
     string sigmoid_lut_mem_path;
     string wave_file_path;
-    wire   legacy_img_wr_ready;
 
-    // DUT 实例化。
-`ifdef TB_USE_CNN_WRITE_PORTS
-    cnn #(
-        .CONV_M0(111),
-        .CONV_SHIFT_N(14),
-        .DWCONV_M0(59),
-        .DWCONV_SHIFT_N(11),
-        .PWCONV_M0(69),
-        .PWCONV_SHIFT_N(13),
-        .FC_M0(11),
-        .FC_SHIFT_N(15)
-    ) cnn_inst (
-        .clk(clk),
-        .rst_n(rst_n),
-        .start(start),
-        .busy(busy),
-        .done(done),
-        .img_wr_en(img_wr_en),
-        .img_wr_addr(img_wr_addr),
-        .img_wr_row_data(img_wr_row_word),
-        .img_wr_commit(img_wr_commit),
-        .img_wr_ready(img_wr_ready),
-        .conv_weight_wr_en(conv_weight_wr_en),
-        .conv_weight_wr_bank(conv_weight_wr_bank),
-        .conv_weight_wr_addr(conv_weight_wr_addr),
-        .conv_weight_wr_data(conv_weight_wr_data),
-        .dwconv_weight_wr_en(dwconv_weight_wr_en),
-        .dwconv_weight_wr_bank(dwconv_weight_wr_bank),
-        .dwconv_weight_wr_addr(dwconv_weight_wr_addr),
-        .dwconv_weight_wr_data(dwconv_weight_wr_data),
-        .pwconv_weight_wr_en(pwconv_weight_wr_en),
-        .pwconv_weight_wr_bank(pwconv_weight_wr_bank),
-        .pwconv_weight_wr_addr(pwconv_weight_wr_addr),
-        .pwconv_weight_wr_data(pwconv_weight_wr_data),
-        .conv_bias_wr_en(conv_bias_wr_en),
-        .conv_bias_wr_bank(conv_bias_wr_bank),
-        .conv_bias_wr_addr(conv_bias_wr_addr),
-        .conv_bias_wr_data(conv_bias_wr_data),
-        .dwconv_bias_wr_en(dwconv_bias_wr_en),
-        .dwconv_bias_wr_bank(dwconv_bias_wr_bank),
-        .dwconv_bias_wr_addr(dwconv_bias_wr_addr),
-        .dwconv_bias_wr_data(dwconv_bias_wr_data),
-        .pwconv_bias_wr_en(pwconv_bias_wr_en),
-        .pwconv_bias_wr_bank(pwconv_bias_wr_bank),
-        .pwconv_bias_wr_addr(pwconv_bias_wr_addr),
-        .pwconv_bias_wr_data(pwconv_bias_wr_data),
-        .fc_weight_wr_en(fc_weight_wr_en),
-        .fc_weight_wr_addr(fc_weight_wr_addr),
-        .fc_weight_wr_data(fc_weight_wr_data),
-        .fc_bias_wr_en(fc_bias_wr_en),
-        .fc_bias_wr_data(fc_bias_wr_data),
-        .sigmoid_lut_wr_en(sigmoid_lut_wr_en),
-        .sigmoid_lut_wr_addr(sigmoid_lut_wr_addr),
-        .sigmoid_lut_wr_data(sigmoid_lut_wr_data),
-        .out_stream_valid(out_stream_valid),
-        .out_stream_data(out_stream_data)
-    );
-`else
+    // DUT ???????
     cnn #(
         .CONV_M0(111),
         .CONV_SHIFT_N(14),
@@ -241,9 +139,8 @@ module cnn_sim_tb #(
         .out_stream_valid(out_stream_valid),
         .out_stream_data(out_stream_data)
     );
-`endif
 
-    // 10ns 周期时钟。
+    // 10ns ????????
     always #(CLK_HALF_PERIOD) clk = ~clk;
 
     // 初始化所有驱动信号和计数器。
@@ -256,42 +153,6 @@ module cnn_sim_tb #(
             img_wr_addr = 5'd0;
             img_wr_row_word = 80'd0;
             img_wr_commit = 1'b0;
-
-            conv_weight_wr_en = 1'b0;
-            conv_weight_wr_bank = 5'd0;
-            conv_weight_wr_addr = 3'd0;
-            conv_weight_wr_data = 224'd0;
-            conv_bias_wr_en = 1'b0;
-            conv_bias_wr_bank = 1'b0;
-            conv_bias_wr_addr = 3'd0;
-            conv_bias_wr_data = 64'd0;
-
-            dwconv_weight_wr_en = 1'b0;
-            dwconv_weight_wr_bank = 2'd0;
-            dwconv_weight_wr_addr = 3'd0;
-            dwconv_weight_wr_data = 96'd0;
-            dwconv_bias_wr_en = 1'b0;
-            dwconv_bias_wr_bank = 1'b0;
-            dwconv_bias_wr_addr = 3'd0;
-            dwconv_bias_wr_data = 64'd0;
-
-            pwconv_weight_wr_en = 1'b0;
-            pwconv_weight_wr_bank = 3'd0;
-            pwconv_weight_wr_addr = 3'd0;
-            pwconv_weight_wr_data = 128'd0;
-            pwconv_bias_wr_en = 1'b0;
-            pwconv_bias_wr_bank = 1'b0;
-            pwconv_bias_wr_addr = 3'd0;
-            pwconv_bias_wr_data = 64'd0;
-
-            fc_weight_wr_en = 1'b0;
-            fc_weight_wr_addr = 7'd0;
-            fc_weight_wr_data = 64'd0;
-            fc_bias_wr_en = 1'b0;
-            fc_bias_wr_data = 32'd0;
-            sigmoid_lut_wr_en = 1'b0;
-            sigmoid_lut_wr_addr = 8'd0;
-            sigmoid_lut_wr_data = 32'd0;
 
             timeout_cycles = 4000;
             runtime_wave_enable = ENABLE_WAVE;
@@ -470,130 +331,6 @@ module cnn_sim_tb #(
     endtask
 
     // 逐字写入所有层的权重。
-    task automatic load_weights;
-        begin
-            for (conv_weight_idx = 0; conv_weight_idx < CONV_WEIGHT_WORD_COUNT; conv_weight_idx = conv_weight_idx + 1) begin
-                @(posedge clk);
-                conv_weight_wr_en <= 1'b1;
-                conv_weight_wr_bank <= conv_weight_idx / 8;
-                conv_weight_wr_addr <= conv_weight_idx % 8;
-                conv_weight_wr_data <= conv_weight_words_mem[conv_weight_idx];
-            end
-            @(posedge clk);
-            conv_weight_wr_en <= 1'b0;
-            conv_weight_wr_bank <= 5'd0;
-            conv_weight_wr_addr <= 3'd0;
-            conv_weight_wr_data <= 224'd0;
-
-            for (dwconv_weight_idx = 0; dwconv_weight_idx < DWCONV_WEIGHT_WORD_COUNT; dwconv_weight_idx = dwconv_weight_idx + 1) begin
-                @(posedge clk);
-                dwconv_weight_wr_en <= 1'b1;
-                dwconv_weight_wr_bank <= dwconv_weight_idx / 8;
-                dwconv_weight_wr_addr <= dwconv_weight_idx % 8;
-                dwconv_weight_wr_data <= dwconv_weight_words_mem[dwconv_weight_idx];
-            end
-            @(posedge clk);
-            dwconv_weight_wr_en <= 1'b0;
-            dwconv_weight_wr_bank <= 2'd0;
-            dwconv_weight_wr_addr <= 3'd0;
-            dwconv_weight_wr_data <= 96'd0;
-
-            for (pwconv_weight_idx = 0; pwconv_weight_idx < PWCONV_WEIGHT_WORD_COUNT; pwconv_weight_idx = pwconv_weight_idx + 1) begin
-                @(posedge clk);
-                pwconv_weight_wr_en <= 1'b1;
-                pwconv_weight_wr_bank <= pwconv_weight_idx / 8;
-                pwconv_weight_wr_addr <= pwconv_weight_idx % 8;
-                pwconv_weight_wr_data <= pwconv_weight_words_mem[pwconv_weight_idx];
-            end
-            @(posedge clk);
-            pwconv_weight_wr_en <= 1'b0;
-            pwconv_weight_wr_bank <= 3'd0;
-            pwconv_weight_wr_addr <= 3'd0;
-            pwconv_weight_wr_data <= 128'd0;
-
-            for (fc_weight_idx = 0; fc_weight_idx < FC_WEIGHT_WORD_COUNT; fc_weight_idx = fc_weight_idx + 1) begin
-                @(posedge clk);
-                fc_weight_wr_en <= 1'b1;
-                fc_weight_wr_addr <= fc_weight_idx[6:0];
-                fc_weight_wr_data <= fc_weight_words_mem[fc_weight_idx];
-            end
-            @(posedge clk);
-            fc_weight_wr_en <= 1'b0;
-            fc_weight_wr_addr <= 7'd0;
-            fc_weight_wr_data <= 64'd0;
-        end
-    endtask
-
-    // 逐字写入所有层的偏置。
-    task automatic load_bias;
-        begin
-            for (conv_bias_idx = 0; conv_bias_idx < CONV_BIAS_WORD_COUNT; conv_bias_idx = conv_bias_idx + 1) begin
-                @(posedge clk);
-                conv_bias_wr_en <= 1'b1;
-                conv_bias_wr_bank <= 1'b0;
-                conv_bias_wr_addr <= conv_bias_idx[2:0];
-                conv_bias_wr_data <= conv_bias_words_mem[conv_bias_idx];
-            end
-            @(posedge clk);
-            conv_bias_wr_en <= 1'b0;
-            conv_bias_wr_bank <= 1'b0;
-            conv_bias_wr_addr <= 3'd0;
-            conv_bias_wr_data <= 64'd0;
-
-            for (dwconv_bias_idx = 0; dwconv_bias_idx < DWCONV_BIAS_WORD_COUNT; dwconv_bias_idx = dwconv_bias_idx + 1) begin
-                @(posedge clk);
-                dwconv_bias_wr_en <= 1'b1;
-                dwconv_bias_wr_bank <= 1'b0;
-                dwconv_bias_wr_addr <= dwconv_bias_idx[2:0];
-                dwconv_bias_wr_data <= dwconv_bias_words_mem[dwconv_bias_idx];
-            end
-            @(posedge clk);
-            dwconv_bias_wr_en <= 1'b0;
-            dwconv_bias_wr_bank <= 1'b0;
-            dwconv_bias_wr_addr <= 3'd0;
-            dwconv_bias_wr_data <= 64'd0;
-
-            for (pwconv_bias_idx = 0; pwconv_bias_idx < PWCONV_BIAS_WORD_COUNT; pwconv_bias_idx = pwconv_bias_idx + 1) begin
-                @(posedge clk);
-                pwconv_bias_wr_en <= 1'b1;
-                pwconv_bias_wr_bank <= 1'b0;
-                pwconv_bias_wr_addr <= pwconv_bias_idx[2:0];
-                pwconv_bias_wr_data <= pwconv_bias_words_mem[pwconv_bias_idx];
-            end
-            @(posedge clk);
-            pwconv_bias_wr_en <= 1'b0;
-            pwconv_bias_wr_bank <= 1'b0;
-            pwconv_bias_wr_addr <= 3'd0;
-            pwconv_bias_wr_data <= 64'd0;
-
-            for (fc_bias_idx = 0; fc_bias_idx < FC_BIAS_WORD_COUNT; fc_bias_idx = fc_bias_idx + 1) begin
-                @(posedge clk);
-                fc_bias_wr_en <= 1'b1;
-                fc_bias_wr_data <= fc_bias_words_mem[fc_bias_idx];
-            end
-            @(posedge clk);
-            fc_bias_wr_en <= 1'b0;
-            fc_bias_wr_data <= 32'd0;
-        end
-    endtask
-
-    // 写入 Sigmoid LUT。
-    task automatic load_sigmoid_lut;
-        begin
-            for (sigmoid_lut_idx = 0; sigmoid_lut_idx < SIGMOID_LUT_WORD_COUNT; sigmoid_lut_idx = sigmoid_lut_idx + 1) begin
-                @(posedge clk);
-                sigmoid_lut_wr_en <= 1'b1;
-                sigmoid_lut_wr_addr <= sigmoid_lut_idx[7:0];
-                sigmoid_lut_wr_data <= sigmoid_lut_words_mem[sigmoid_lut_idx];
-            end
-            @(posedge clk);
-            sigmoid_lut_wr_en <= 1'b0;
-            sigmoid_lut_wr_addr <= 8'd0;
-            sigmoid_lut_wr_data <= 32'd0;
-        end
-    endtask
-
-    // 仅当 DUT 明确允许时才写入下一帧。
     task automatic wait_img_wr_ready;
         begin
             while (!img_wr_ready) begin

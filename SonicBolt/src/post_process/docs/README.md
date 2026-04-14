@@ -1,6 +1,6 @@
 # Post Process 子系统架构说明
 
-> 当前系统所属版本：SonicBolt: Post Process v1.2
+> 当前系统所属版本：SonicBolt: Post Process v1.3
 
 ## I. 整体架构
 本子系统实现 CNN 加速器流中全部后续处理：包含最大池化（MaxPool）、特征图展平（Flatten）、全连接层（FC）以及最终的概率激活（Sigmoid）。
