@@ -64,6 +64,8 @@ DWConv 的参数组织因为不存在跨通道累加，显得更加简化。dwco
 - **权重 bank**：按卷积核行数拆分为 3 个 bank。每个 bank 深度为 8（对应 8 个 group）。单字宽度为 $4\text{(ch)}\times 3\text{(col)}\times 8\text{(bit)} = 96\text{bit}$。也就是说，针对某一 group，一次读取即可同步获取 4 个通道全套所需的 $\times 3$ 权重。
 - **Bias bank**：单独存储在一个深度为 8 的 bank 中。单字宽度为 $4\text{(ch)}\times 16\text{bit} = 64\text{bit}$，一次读出后获得这 4 个通道的 bias。
 
+> 注意：在当前版本(PD-v1.0)中，删除了模块对外暴露的参数 SRAM 写接口。本设计无需考虑 SRAM 的写入总线，为防止 IO PAD 过多干扰后端设计，故删除了 SRAM 写接口，内部 SRAM 的写入使能信号恒无效。
+
 ### 3.4 计算核心：dwconv_core
 
 `dwconv_core` 的主要功能是梳理系统数据流并在正确时序调用计算单元：

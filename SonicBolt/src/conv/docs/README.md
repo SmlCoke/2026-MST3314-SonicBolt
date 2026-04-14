@@ -68,7 +68,7 @@ v2.6 及之前版本中，我们不妨设想，**输入层向 Conv 层提供的�
 2. `conv_param_store.v`：**片上 SRAM 封装**，保存 Conv 整层全部权重和全部偏置，向 `conv_core` 提供当前 token 需要的 `11` 条 kernel row 和 bias。
 3. `conv_shared_input_buffer.v`：**输入缓存**，使用 SRAM 保存完整输入图，并维护当前 `pos` 对应的 `14` 行工作集（Register），执行预取逻辑和双帧缓存逻辑。
 4. `conv_core.v`：**计算核心**，按 `{pos, group}` 发出 token，驱动输入工作集切换、参数读取、MAC 与量化链路。
-5. `conv_tile_mac.v`：**MAC 核心**，基于 `11` 级 `row PE` 串接，计算一个完整 `4(ch) x 4(row) x 4(col)` INT32 tile。
+5. `conv_tile_mac.v`：**MAC 核心**，基于 `11` 级 `row PE` 串接，计算一个完整 `4(ch) x 2(row) x 4(col)` INT32 tile。
 
 **注意：**
 在 v2.5 版本中，由于 DWConv 子系统已经设计完成并且通过了测试，Conv 和 DWConv 共享的大量公共模块（例如：SRAM 行为模型、参数 bank 组织结构、bias 打拍模块、元数据打拍模块等）被收集到 `utils/` 目录下，例如：
@@ -152,6 +152,7 @@ bias 采用 1 个 bank：每个 bank $8(\text{depth})\times 64\text{bit(word)}$
 后续 SonicBolt 其余计算层也遵循相同原则。
 
 > 注意: 由于 Memory Compiler 无法提供 depth < 32 的 SRAM，因此我们在实现时，权重 bank 和 bias bank 的 depth 都被扩展到了 32，但实际只有前 8 个地址是有效的。
+> 此外，在当前版本(PD-v1.0)中，删除了模块对外暴露的参数 SRAM 写接口。本设计无需考虑 SRAM 的写入总线，为防止 IO PAD 过多干扰后端设计，故删除了 SRAM 写接口，内部 SRAM 的写入使能信号恒无效。
 
 ### 3.5 计算核心：conv_core
 conv_core 的主要功能是根据当前的 pos 和 group **发出请求信号、参数地址**，然后**接收**输入缓存和 SRAM 传回的**数据和参数(Token)**，**驱动 MAC 与量化链路**。
@@ -175,7 +176,7 @@ conv_core 的主要功能是根据当前的 pos 和 group **发出请求信号�
 2. **半窗缓存机制介入**：v2.7 版本引入半窗缓存机制后，以下所有模块的流水级数不变，但是输入输出位宽以及运算单元数量均减半。
 3. `conv_tile_mac_row_mult`：内部包含 2 级流水（局部寄存输入 + 行乘法计算）。11 个模块并行计算对应的 kernel_row 乘加结果，输出 32 个 INT19 的部分和。
    - input: 2x10x8bit 输入条带，及其对应的 4×7×8bit 卷积核行
-   - output: 4x4×4x19bit 部分和（经内部打拍输出）
+   - output: 4x2x4x19bit 部分和（经内部打拍输出）
 4. `conv_tile_mac_row_add`：作为后续的第 3、4 级流水，对 11 个 kernel_row 的部分和极偏置进行归约。为了切断 12 个操作数构成的庞大加法树，模块内部已被显式分割为两级时序：第一拍对 12 个输入执行两两相加存入 Register 堆，第二拍汇总得出 64 个最终结果。
    - input: 11x(4x2x4x19bit) 部分和
    - output: 4x2x4x32bit 结果

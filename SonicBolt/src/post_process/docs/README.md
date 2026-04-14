@@ -30,6 +30,8 @@ FC 的帧级累积非常精巧地掩盖了等待时延：由于整图包含了 7
 
 ## III. RTL 模块解析
 
+![](./post_process_subsystem.svg)
+
 ### 3.1 模块列表
 当前 `SonicBolt/src/post_process` 目录中如下：
 

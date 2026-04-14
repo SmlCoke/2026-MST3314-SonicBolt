@@ -1,9 +1,9 @@
 <div align="center">
 
-# ⚡️SonicBolt(声速闪电)
+# ⚡️SonicBolt PD(声速闪电 • PD Version)
 **数字集成电路设计 · 高性能 CNN 加速器全流程设计**
 
-[![Version](https://img.shields.io/badge/Version-v5.5-blue.svg)]() [![Institution](https://img.shields.io/badge/Institution-SJTU-red.svg)](https://www.sjtu.edu.cn/) [![SmlCoke](https://img.shields.io/badge/SmlCoke-https://smlcoke.com-brightgreen.svg)](https://smlcoke.com) [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![Version](https://img.shields.io/badge/Version-PD_v1.0-blue.svg)]() [![Institution](https://img.shields.io/badge/Institution-SJTU-red.svg)](https://www.sjtu.edu.cn/) [![SmlCoke](https://img.shields.io/badge/SmlCoke-https://smlcoke.com-brightgreen.svg)](https://smlcoke.com) [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 
 [项目简介](#i-项目简介) • [仓库结构](#ii-仓库结构) • [各模块说明](#iii-各模块说明) • [Quick Start](#iv-quick-start-guide) • [设计进度](#v-设计进度)
 
@@ -165,12 +165,12 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 5. Post Process 子系统的设计说明文档：[SonicBolt/src/post_process/docs/README.md](SonicBolt/src/post_process/docs/README.md)
 
 
+注意，本分支为 **SonicBolt PD** , 专注于 SonicBolt 项目的后端设计，删除了模块对外暴露的参数 SRAM 写接口。本设计无需考虑 SRAM 的写入总线，为防止 IO PAD 过多干扰后端设计，故删除了 SRAM 写接口，内部 SRAM 的写入使能信号恒无效。
+PD-v1.0 作为本分支的第一版，基于 main branch 的** SonicBolt v5.5** 实现，除了删除参数 SRAM 暴露的写接口外，其余模块逻辑完全保持不变。
+
 当前**已实现完整功能版本**：
-- CNN-v1.0: SonicBolt v5.1，全链路基础实现，包含所有功能，并且通过功能仿真验证
-- CNN-v1.1: SonicBolt v5.2，新增**输入 Ping-Pong 缓存机制**，实现流水线连续计算
-- CNN-v1.2: SonicBolt v5.3，将杂糅的状态转移逻辑重构为有限状态机写法，提升代码可读性和可维护性。
-- CNN-v1.3: SonicBolt v5.4，新增**半窗缓存机制**，将 Conv 层的计算降低一半，代价是迭代周期从 72 增加至 80 。
-- CNN-v1.4: SonicBolt v5.5，实现更激进的下一帧启动机制，在**控制逻辑复杂化程度较低**的情况下，将 Conv 层的迭代周期**从 103 进一步压缩至 89** ，成功实现了 $1000k fps$ 的性能指标。
+- CNN-PD-v1.0: SonicBolt PD v1.0，全链路基础实现，包含所有功能，删除了参数 SRAM 写接口，并且通过功能仿真验证
+
 
 ---
 
