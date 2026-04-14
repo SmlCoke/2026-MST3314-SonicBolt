@@ -2,7 +2,7 @@
 /*
  * 模块名称: conv_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-04-13
+ * 日期: 2026-04-14
  * 版本: v2.7
  *
  * 功能概述:
@@ -44,18 +44,6 @@ module conv_subsystem #(
     input  wire          img_wr_commit,    // 当前帧 30 行均已写完，提交当前写 bank
     output wire          img_wr_ready,     // 当前允许开始写下一帧
 
-    // ------------ 权重 SRAM 写控制信号 ------------
-    input  wire          weight_wr_en,     // Conv 权重写使能
-    input  wire [4:0]    weight_wr_bank,   // Conv 权重 bank 编号，当前只使用 0..10
-    input  wire [2:0]    weight_wr_addr,   // Conv 权重 group 地址，8 个 group 需要 3bit
-    input  wire [223:0]  weight_wr_data,   // 1 个权重 word = 4 x 7 x 8bit = 224bit
-
-    // ------------ 偏置 SRAM 写控制信号 ------------
-    input  wire          bias_wr_en,       // Conv 偏置写使能
-    input  wire          bias_wr_bank,     // Conv 偏置 bank 编号，当前版本只使用 0
-    input  wire [2:0]    bias_wr_addr,     // Conv 偏置 group 地址
-    input  wire [63:0]   bias_wr_data,     // 1 个偏置 word = 4 x INT16 = 64bit
-
     // ------------ 输出数据流接口 ------------
     output wire          out_stream_valid, // 输出 tile 有效
     output wire          out_stream_last,  // 输出 tile 是否是最后一个
@@ -70,9 +58,6 @@ module conv_subsystem #(
     wire          pos_window_valid;        // 输入窗口有效
     wire          consume_tick;            // conv_core 告诉输入缓存“当前 token 已被真正消费”
     wire [14*80-1:0] pos_window_data;      // 返回的 14x10 工作集，按 14 个 80bit 行展平
-
-    wire          weight_store_wr_en;      // 权重 SRAM 写使能 
-    wire          bias_store_wr_en;        // 偏置 SRAM 写使能 
 
     wire          weight_rd_en;            // 权重 SRAM 读使能    
     wire [2:0]    weight_rd_group;         // 权重 SRAM 读地址    
@@ -95,12 +80,6 @@ module conv_subsystem #(
     wire             img_wr_ready_int;     // 输入缓存内部生成的“可继续写下一帧”信号
     wire             consume_bank_sel;     // 本次启动时应消费的 ready bank
     wire             launch_start;         // 真正送给输入缓存和 conv_core 的启动脉冲
-
-
-    // 计算过程中禁止覆盖当前层参数 SRAM；
-    // 当启动脉冲拉高的这个拍，也一并禁止参数写入，避免与读通路发生冲突。
-    assign weight_store_wr_en = weight_wr_en && !busy && !launch_start;
-    assign bias_store_wr_en   = bias_wr_en && !busy && !launch_start;
 
     // 当前策略下优先选择编号较小的 ready bank；
     // 由于 launch_start 已经要求 ready_bank_mask 非零，因此这里总能选出一个合法 bank。
@@ -143,18 +122,6 @@ module conv_subsystem #(
     conv_param_store u_conv_param_store (
         .clk(clk),
         .rst_n(rst_n),
-
-        // ------------ 权重 SRAM 写控制信号 ------------
-        .weight_wr_en(weight_store_wr_en),  // in: 权重写使能   
-        .weight_wr_bank(weight_wr_bank),    // in: 写入哪个weight bank，当前只使用 0..10 
-        .weight_wr_addr(weight_wr_addr),    // in: 写入哪个 group 地址，8 个 group 需要 3bit 
-        .weight_wr_data(weight_wr_data),    // in: 权重写数据，4 x 7 x 8bit = 224bit 
-
-        // ------------ 偏置 SRAM 写控制信号 ------------
-        .bias_wr_en(bias_store_wr_en),      // in: 偏置写使能
-        .bias_wr_bank(bias_wr_bank),        // in: 写入哪个bias bank，当前版本只允许 0
-        .bias_wr_addr(bias_wr_addr),        // in: 写入哪个 group 地址
-        .bias_wr_data(bias_wr_data),        // in: 偏置写数据，4 x 16bit = 64bit
 
         // ------------ 权重 SRAM 读控制信号 ------------
         .weight_rd_en(weight_rd_en),        // in: 权重读使能
