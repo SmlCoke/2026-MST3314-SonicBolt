@@ -17,7 +17,6 @@ read_design -format verilog ../rtl/cnn/utils/mult_cell.v
 read_design -format verilog ../rtl/cnn/utils/relu_saturate.v
 read_design -format verilog ../rtl/cnn/utils/rescale.v
 read_design -format verilog ../rtl/cnn/utils/rescale_relu.v
-read_design -format verilog ../rtl/cnn/utils/sram_sp.v
 
 read_design -format verilog ../rtl/cnn/conv/conv_tile_mac_reduce11_stage1_cell.v
 read_design -format verilog ../rtl/cnn/conv/conv_tile_mac_reduce11_stage2_cell.v
