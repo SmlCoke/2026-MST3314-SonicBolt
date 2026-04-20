@@ -2,7 +2,7 @@
 # Keep both possible SMIC18 locations in search_path:
 # 1) ../../SMIC18/*   (current repo layout)
 # 2) ../../../SMIC18/* (server layout where SMIC18 is sibling of project folder)
-set search_path "$search_path ../rtl/cnn ../rtl/cnn/conv ../rtl/cnn/dwconv ../rtl/cnn/pwconv ../rtl/cnn/post_process ../rtl/cnn/utils ../scripts ../../SMIC18/lib ../../SMIC18/mem ../../../SMIC18/lib ../../../SMIC18/mem ../work"
+set search_path "$search_path ../rtl/cnn ../rtl/cnn/conv ../rtl/cnn/dwconv ../rtl/cnn/pwconv ../rtl/cnn/post_process ../rtl/cnn/utils ../scripts ../../SMIC18/lib ../../SMIC18/mem ../work"
 
 # Standard cell + IO + SRAM macro timing libraries
 # If you run worst-case timing closure, replace *_tt_1.8_25.lib with *_ss_1.62_125.lib.
