@@ -5,10 +5,10 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | syn/baseline | SonicBolt-v5.3 CNN_v1.2 | 94 | ✅️ | ❌️ | 作为后续对比的基线版本 | ✅️ |
 | CNN-v1.3 | ❌️(中间态) | 103 | ✅️ | ✅️ | 该版本目前 fc 和 sigmoid 层的 SRAM 仍然是reg实现的行为模型 | ✅️ |
-| CNN-v1.3_2 | SonicBolt-v5.4 CNN_v1.3 | 103 | ✅️ | ✅️ | 全 SRAM 实现 | 🔲 进行中  |
+| CNN-v1.3_2 | SonicBolt-v5.4 CNN_v1.3 | 103 | ✅️ | ✅️ | 全 SRAM 实现 | ✅️  |
 | CNN-v1.4 | ❌️(中间态) | 82 | ✅️ | ✅️ | 较为复杂的控制逻辑 | ❌️ 废除 |
-| CNN-v1.4_2 | SonicBolt-v5.5 CNN_v1.4 | 89 | ✅️ | ✅️ | 更简单的控制逻辑 | 🔲 进行中 |
-| CNN-PD-v1.0 | SonicBolt-PD-v1.0 CNN-PD-v1.0 | 89 | ✅️ | ✅️ | 删除权重/偏置SRAM写接口 | 🔲 进行中 |
+| CNN-v1.4_2 | SonicBolt-v5.5 CNN_v1.4 | 89 | ✅️ | ✅️ | 更简单的控制逻辑 | ✅️ |
+| CNN-PD-v1.0 | SonicBolt-PD-v1.0 CNN-PD-v1.0 | 89 | ✅️ | ✅️ | 删除权重/偏置SRAM写接口 | ✅️ |
 | CNN-Lite-v1.0 | SonicBolt-Lite-v1.0 CNN-Lite-v1.0 | 89 | ✅️ | ✅️ | Preview, 删除权重/偏置SRAM，采用ROM实现 | ✅️ |
 
 
