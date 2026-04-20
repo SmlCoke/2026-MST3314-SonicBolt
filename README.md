@@ -231,6 +231,5 @@ python run_cnn_sim_tb.py --start-sample 0 --sample-count 496
 | 架构研究 | 阅读规范、建立 Python 行为模型 | ✅ 完成 |
 | RTL 设计 | Verilog 模块编写（SonicBolt） | ✅ 完成 |
 | 逻辑仿真 | Testbench 编写与功能验证 | ✅ 完成 |
-| 逻辑综合 | Design Compiler，时序/面积/功耗分析 | 🔲 进行中 |
-| 时序分析 | PrimeTime 时序签核 | 🔲 进行中 |
-| 物理设计 | ICC/Encounter 布局布线，后仿真 | 🔲 待开始 |
+| 逻辑综合 | Design Compiler，时序/面积/功耗分析 | ✅ 完成 |
+| 物理设计 | ICC 布局布线 | 🔲 待开始 |
