@@ -2,8 +2,8 @@
 /*
  * 模块名称: fc
  * 作者: SonicBolt 团队
- * 日期: 2026-04-06
- * 版本: v1.2
+ * 日期: 2026-04-15
+ * 版本: v1.3
  *
  * 功能概述:
  *   - 执行全连接层 FC(2,288): INT8 输入向量 -> 2 路 INT32 累加。
@@ -13,13 +13,14 @@
  * 设计说明:
  *   - 输入 token 为 4 路 INT8，配合 metadata 的 pos/group 还原 flatten 索引。
  *   - flatten 索引定义: idx = ch * 9 + pos，ch = group * 4 + lane。
- *   - 权重组织为 72x64 单端口 SRAM: addr = pos * 8 + group，每个 word 打包 8 个 INT8。
+ *   - 权重组织为 72x64 只读 ROM: addr = pos * 8 + group，每个 word 打包 8 个 INT8。
  *   - 低 32bit 为 class0 四路，高 32bit 为 class1 四路。
  *
  * 版本定位:
  *   - v1.0 完成基本功
  *   - v1.1 删除了部分冗余信号，并且强制使 MAC 单元和 SATURATE 单元保持一级流水，防止组合逻辑输出
  *   - v1.2 修正了 bias_wr_data 输入位宽错误
+ *   - v1.3 FC 参数链路改为 ROM 只读，删除在线写口
  */
 module fc #(
     parameter integer M0      = 11,
@@ -37,14 +38,6 @@ module fc #(
 
     // ---------- 输入数据 ----------
     input  wire [31:0] in_data_bus,// 4(ch) x INT8 = 32bit
-
-    // ---------- FC 参数写接口 ----------
-    input  wire        weight_wr_en,
-    input  wire [6:0]  weight_wr_addr,
-    input  wire [63:0] weight_wr_data,
-
-    input  wire        bias_wr_en,
-    input  wire [31:0] bias_wr_data,
 
     // ---------- 输出 valid ----------
     output wire        out_valid,
@@ -80,41 +73,24 @@ module fc #(
     wire        stage2_valid;
     wire [15:0] stage2_data_bus;
 
-    // 权重 SRAM 在 fire 到来时提前一拍预读，保证 valid 到来时权重已经对齐。
-    // SRAM 地址构造： {pos. group} 定位权重组
-    fc_weight_sram #(
+    // 权重/偏置 ROM 在 fire 到来时提前一拍预读，保证 valid 到来时参数已经对齐。
+    // 地址构造仍保持 {pos, group} 规则，避免破坏现有时序关系。
+    fc_param_store_rom #(
         .WEIGHT_DEPTH(WEIGHT_DEPTH)
-    ) u_fc_weight_sram (
+    ) u_fc_param_store_rom (
         .clk(clk),
         .rst_n(rst_n),
 
         // ---------- 输入元数据 ----------
-        .in_fire(in_fire),                   // in: 启动 SRAM 访问，提前预读
-        .in_valid(in_valid),                 // in: 当前 token 有效，用于预取下一拍权重
+        .in_fire(in_fire),                   // in: 帧启动预读信号
+        .in_valid(in_valid),                 // in: 当前 token 有效信号
         .in_pos(in_pos),                     // in: 通过 pos/group 定位权重地址
         .in_group(in_group),                 // in: 通过 pos/group 定位权重地址
-        
-        // ---------- 权重写接口 ---------- 
-        .weight_wr_en(weight_wr_en),         // in: 写使能
-        .weight_wr_addr(weight_wr_addr),     // in: 写地址, 7bit
-        .weight_wr_data(weight_wr_data),     // in: 写数据, 64bit
 
-        // ---------- 输出数据 ----------
-        .out_weight_rdata(weight_sram_rdata) // out: 预读的权重数据, 64bit
-    );
-
-    // bias 写入与存储。
-    fc_bias_store u_fc_bias_store (
-        .clk(clk),
-        .rst_n(rst_n),
-
-        // ---------- 输入 bias 写接口 ----------
-        .bias_wr_en(bias_wr_en),            // in: bias 写使能
-        .bias_wr_data(bias_wr_data),        // in: 写入的 bias 数据, 16bit
-
-        // ---------- 输出 bias ----------
-        .out_bias_cls0(bias_cls0),          // out: class0 bias, 16bit
-        .out_bias_cls1(bias_cls1)           // out: class1 bias, 16bit
+        // ---------- 输出参数 ----------
+        .out_weight_rdata(weight_sram_rdata), // out: 预读的权重数据, 64bit
+        .out_bias_cls0(bias_cls0),            // out: class0 bias, 16bit
+        .out_bias_cls1(bias_cls1)             // out: class1 bias, 16bit
     );
 
     // 全连接层 4 路通道乘加运算，内置一级流水。

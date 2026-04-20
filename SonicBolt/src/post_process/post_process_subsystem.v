@@ -2,17 +2,16 @@
 /*
  * 模块名称: post_process_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-04-06
- * 版本: v1.2
+ * 日期: 2026-04-15
+ * 版本: v1.4
  *
  * 功能概述:
  *   - 后处理子系统顶层：Maxpool -> Flatten -> FC -> Sigmoid
- *   - FC 支持 72x64 权重 SRAM 在线写入，Bias 采用 2xINT16 寄存
+ *   - FC 与 Sigmoid 参数均改为 ROM 固化，只保留读链路
  *   - 输出 busy/done 状态，便于与其他子系统统一集成
  *
  * 设计说明:
  *   - 输入一个 tile 即开始流式处理，不等待整帧缓存
- *   - busy=1 期间，禁止覆盖 FC 权重/Bias 与 Sigmoid LUT
  *   - FC 到 Sigmoid 以及最终输出阶段只保留 valid 与数据总线
  *
  * 版本定位:
@@ -20,6 +19,8 @@
  *   - v1.1 优化了时序逻辑，删除了部分冗余逻辑，同时恢复 fire 信号作为启动信号的功能地位，
  *      将几个组合逻辑模块优化为流水线，确保逻辑综合优化顺利
  *   - v1.2 修复了 weight_sram 的时序错误、fc 的位宽错误以及恢复展平层信号
+ *   - v1.3 FC 参数链路改为 ROM 只读，删除 FC 写口
+ *   - v1.4 Sigmoid LUT 参数链路改为 ROM 只读，删除 Sigmoid 写口
  */
 module post_process_subsystem #(
     parameter integer FC_M0      = 11,
@@ -38,19 +39,6 @@ module post_process_subsystem #(
     input  wire         in_stream_fire,
     input  wire [127:0] in_stream_data,
 
-    // ---------- FC 参数写接口 ----------
-    input  wire         fc_weight_wr_en,
-    input  wire [6:0]   fc_weight_wr_addr,
-    input  wire [63:0]  fc_weight_wr_data,
-
-    input  wire         fc_bias_wr_en,
-    input  wire [31:0]  fc_bias_wr_data,
-
-    // ---------- Sigmoid LUT 写接口 ----------
-    input  wire         sigmoid_lut_wr_en,
-    input  wire [7:0]   sigmoid_lut_wr_addr,
-    input  wire [31:0]  sigmoid_lut_wr_data,
-
     // ---------- 输出数据流接口 ----------
     output wire         out_stream_valid,
     output wire [63:0]  out_stream_data
@@ -58,10 +46,6 @@ module post_process_subsystem #(
 
     reg busy_reg;
     reg done_reg;
-
-    wire fc_weight_store_wr_en;
-    wire fc_bias_store_wr_en;
-    wire sigmoid_lut_store_wr_en;
 
     // ---------- Maxpool 内部流 ----------
     wire         maxpool_out_valid_int;
@@ -86,11 +70,6 @@ module post_process_subsystem #(
     // ---------- Sigmoid 内部流 ----------
     wire         sigmoid_out_valid_int;
     wire [63:0]  sigmoid_out_data_int;
-
-    // 忙于处理当前图时，禁止覆盖本层参数。
-    assign fc_weight_store_wr_en   = fc_weight_wr_en && !busy_reg;
-    assign fc_bias_store_wr_en     = fc_bias_wr_en && !busy_reg;
-    assign sigmoid_lut_store_wr_en = sigmoid_lut_wr_en && !busy_reg;
 
     // 子系统忙闲状态：
     // - 收到本帧首个有效 token 后 busy 拉高
@@ -163,13 +142,6 @@ module post_process_subsystem #(
         // ---------- 输入数据 ----------
         .in_data_bus(flatten_out_data_int),    // in: 输入数据总线
 
-        // ---------- 权重/偏置写接口 ----------
-        .weight_wr_en(fc_weight_store_wr_en),  // in: 权重写使能
-        .weight_wr_addr(fc_weight_wr_addr),    // in: 写入哪个权重地址，范围 0..71
-        .weight_wr_data(fc_weight_wr_data),    // in: 权重写数据，72 x 64bit = 576byte
-        .bias_wr_en(fc_bias_store_wr_en),      // in: 偏置写使能
-        .bias_wr_data(fc_bias_wr_data),        // in: 偏置写数据，2 x 16bit = 4byte
-
         // ---------- 输出数据 ----------
         .out_valid(fc_out_valid_int),         // out: 输出有效
         .out_data_bus(fc_out_data_int)        // out: 输出数据总线
@@ -183,11 +155,6 @@ module post_process_subsystem #(
         // ---------- 输入数据 ----------
         .in_valid(fc_out_valid_int),
         .in_data_bus(fc_out_data_int),
-
-        // ---------- LUT 写接口 ----------
-        .lut_wr_en(sigmoid_lut_store_wr_en),
-        .lut_wr_addr(sigmoid_lut_wr_addr),
-        .lut_wr_data(sigmoid_lut_wr_data),
 
         // ---------- 输出数据 ----------
         .out_valid(sigmoid_out_valid_int),

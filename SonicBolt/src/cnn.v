@@ -3,7 +3,7 @@
  * 模块名称: cnn
  * 作者: SonicBolt 团队
  * 日期: 2026-04-13
- * 版本: v1.5
+ * 版本: v1.9
  *
  * 功能概述:
  *   SonicBolt 顶层 CNN 管线，依次串接:
@@ -22,6 +22,10 @@
  *   - v1.5 删除 pwconv 引入的 launch_safe 信号，改为在顶层 conv_guard_done 保护窗结束时允许下一帧启动。根
  *      据经验回归结果，conv_guard_done 保护窗设置为 7 个周期，可以稳定通过多样本连续仿真测试，并且最大程度压
  *      缩帧间隔以提升吞吐。
+ *   - v1.6 PWConv 参数链路改为 ROM 只读，删除 PWConv 顶层写口与写连线。
+ *   - v1.7 FC 参数链路改为 ROM 只读；顶层 FC 写口暂保留兼容，但不再下发到后处理子系统。
+ *   - v1.8 彻底删除顶层 FC 写口，形成全链路 FC 只读参数形态。
+ *   - v1.9 彻底删除顶层 Sigmoid LUT 写口，形成后处理全链路只读参数形态。
  *     
 
  */
@@ -48,52 +52,6 @@ module cnn #(
     input  wire [79:0]   img_wr_row_data,   // 输入图像写数据，一行 10 个像素，10 x 8bit = 80bit
     input  wire          img_wr_commit,     // 当前帧完整写入结束
     output wire          img_wr_ready,      // 当前允许写下一帧
-
-    // ------------ Conv 权重 SRAM 写控制信号 ------------
-    input  wire          conv_weight_wr_en,    // Conv 权重写使能
-    input  wire [4:0]    conv_weight_wr_bank,  // Conv 权重 bank 编号
-    input  wire [2:0]    conv_weight_wr_addr,  // Conv 权重 group 地址
-    input  wire [223:0]  conv_weight_wr_data,  // Conv 权重写数据
-
-    // ------------ DWConv 权重 SRAM 写控制信号 ------------
-    input  wire          dwconv_weight_wr_en,   // DWConv 权重写使能
-    input  wire [1:0]    dwconv_weight_wr_bank, // DWConv 权重 bank 编号
-    input  wire [2:0]    dwconv_weight_wr_addr, // DWConv 权重 group 地址
-    input  wire [95:0]   dwconv_weight_wr_data, // DWConv 权重写数据
-
-    // ------------ PWConv 权重 SRAM 写控制信号 ------------
-    input  wire          pwconv_weight_wr_en,   // PWConv 权重写使能
-    input  wire [2:0]    pwconv_weight_wr_bank, // PWConv 权重 bank 编号
-    input  wire [2:0]    pwconv_weight_wr_addr, // PWConv 权重 group 地址
-    input  wire [127:0]  pwconv_weight_wr_data, // PWConv 权重写数据
-
-    // ------------ Conv 偏置 SRAM 写控制信号 ------------
-    input  wire          conv_bias_wr_en,      // Conv 偏置写使能
-    input  wire          conv_bias_wr_bank,    // Conv 偏置 bank 编号
-    input  wire [2:0]    conv_bias_wr_addr,    // Conv 偏置 group 地址
-    input  wire [63:0]   conv_bias_wr_data,    // Conv 偏置写数据
-
-    // ------------ DWConv 偏置 SRAM 写控制信号 ------------
-    input  wire          dwconv_bias_wr_en,    // DWConv 偏置写使能
-    input  wire          dwconv_bias_wr_bank,  // DWConv 偏置 bank 编号
-    input  wire [2:0]    dwconv_bias_wr_addr,  // DWConv 偏置 group 地址
-    input  wire [63:0]   dwconv_bias_wr_data,  // DWConv 偏置写数据
-
-    // ------------ PWConv 偏置 SRAM 写控制信号 ------------
-    input  wire          pwconv_bias_wr_en,    // PWConv 偏置写使能
-    input  wire          pwconv_bias_wr_bank,  // PWConv 偏置 bank 编号
-    input  wire [2:0]    pwconv_bias_wr_addr,  // PWConv 偏置 group 地址
-    input  wire [63:0]   pwconv_bias_wr_data,  // PWConv 偏置写数据
-
-    // ------------ FC / Sigmoid 参数写控制信号 ------------
-    input  wire          fc_weight_wr_en,      // FC 权重写使能
-    input  wire [6:0]    fc_weight_wr_addr,    // FC 权重地址
-    input  wire [63:0]   fc_weight_wr_data,    // FC 权重写数据
-    input  wire          fc_bias_wr_en,        // FC 偏置写使能
-    input  wire [31:0]   fc_bias_wr_data,      // FC 偏置写数据
-    input  wire          sigmoid_lut_wr_en,    // Sigmoid LUT 写使能
-    input  wire [7:0]    sigmoid_lut_wr_addr,  // Sigmoid LUT 地址
-    input  wire [31:0]   sigmoid_lut_wr_data,  // Sigmoid LUT 写数据
 
     // ------------ 输出数据流接口 ------------
     output wire          out_stream_valid, // 输出数据有效
@@ -208,18 +166,6 @@ module cnn #(
         .img_wr_commit(img_wr_commit),
         .img_wr_ready(img_wr_ready),
 
-        // ------------ Conv 权重 SRAM 写控制信号 ------------
-        .weight_wr_en(conv_weight_wr_en),
-        .weight_wr_bank(conv_weight_wr_bank),
-        .weight_wr_addr(conv_weight_wr_addr),
-        .weight_wr_data(conv_weight_wr_data),
-
-        // ------------ Conv 偏置 SRAM 写控制信号 ------------
-        .bias_wr_en(conv_bias_wr_en),
-        .bias_wr_bank(conv_bias_wr_bank),
-        .bias_wr_addr(conv_bias_wr_addr),
-        .bias_wr_data(conv_bias_wr_data),
-
         // ---------- Conv 输出数据流接口 ----------
         .out_stream_valid(conv_out_stream_valid),
         .out_stream_fire(conv_out_stream_fire),
@@ -246,18 +192,6 @@ module cnn #(
         .in_stream_group(conv_out_stream_group),
         .in_stream_fire(conv_out_stream_fire),
         .in_stream_data(conv_out_stream_data),
-
-        // ------------ DWConv 权重 SRAM 写控制信号 ------------
-        .weight_wr_en(dwconv_weight_wr_en),
-        .weight_wr_bank(dwconv_weight_wr_bank),
-        .weight_wr_addr(dwconv_weight_wr_addr),
-        .weight_wr_data(dwconv_weight_wr_data),
-
-        // ------------ DWConv 偏置 SRAM 写控制信号 ------------
-        .bias_wr_en(dwconv_bias_wr_en),
-        .bias_wr_bank(dwconv_bias_wr_bank),
-        .bias_wr_addr(dwconv_bias_wr_addr),
-        .bias_wr_data(dwconv_bias_wr_data),
 
         // ---------- DWConv 输出数据流接口 ----------
         .out_stream_valid(dwconv_out_stream_valid),
@@ -286,18 +220,6 @@ module cnn #(
         .in_stream_group(dwconv_out_stream_group),
         .in_stream_data(dwconv_out_stream_data),
 
-        // ------------ PWConv 权重 SRAM 写控制信号 ------------
-        .weight_wr_en(pwconv_weight_wr_en),
-        .weight_wr_bank(pwconv_weight_wr_bank),
-        .weight_wr_addr(pwconv_weight_wr_addr),
-        .weight_wr_data(pwconv_weight_wr_data),
-
-        // ------------ PWConv 偏置 SRAM 写控制信号 ------------
-        .bias_wr_en(pwconv_bias_wr_en),
-        .bias_wr_bank(pwconv_bias_wr_bank),
-        .bias_wr_addr(pwconv_bias_wr_addr),
-        .bias_wr_data(pwconv_bias_wr_data),
-
         // ---------- PWConv 输出数据流接口 ----------
         .out_stream_valid(pwconv_out_stream_valid),
         .out_stream_fire(pwconv_out_stream_fire),
@@ -324,16 +246,6 @@ module cnn #(
         .in_stream_group(pwconv_out_stream_group),
         .in_stream_fire(pwconv_out_stream_fire),
         .in_stream_data(pwconv_out_stream_data),
-
-        // ---------- FC / Sigmoid 参数写接口 ----------
-        .fc_weight_wr_en(fc_weight_wr_en),
-        .fc_weight_wr_addr(fc_weight_wr_addr),
-        .fc_weight_wr_data(fc_weight_wr_data),
-        .fc_bias_wr_en(fc_bias_wr_en),
-        .fc_bias_wr_data(fc_bias_wr_data),
-        .sigmoid_lut_wr_en(sigmoid_lut_wr_en),
-        .sigmoid_lut_wr_addr(sigmoid_lut_wr_addr),
-        .sigmoid_lut_wr_data(sigmoid_lut_wr_data),
 
         // ---------- Post-Process 输出数据流接口 ----------
         .out_stream_valid(post_process_out_stream_valid),

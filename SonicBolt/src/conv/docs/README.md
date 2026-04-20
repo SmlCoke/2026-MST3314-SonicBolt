@@ -64,11 +64,11 @@ v2.6 及之前版本中，我们不妨设想，**输入层向 Conv 层提供的�
 
 当前 `SonicBolt/src/conv` 目录中，主通路模块如下：
 
-1. `conv_subsystem.v`：**顶层模块**，连接输入缓存、参数 SRAM 和计算核心。
-2. `conv_param_store.v`：**片上 SRAM 封装**，保存 Conv 整层全部权重和全部偏置，向 `conv_core` 提供当前 token 需要的 `11` 条 kernel row 和 bias。
+1. `conv_subsystem.v`：**顶层模块**，连接输入缓存、参数 ROM 和计算核心。
+2. `conv_param_store_rom.v`：**参数 ROM 封装**，固化 Conv 整层全部权重和全部偏置，向 `conv_core` 提供当前 token 需要的 `11` 条 kernel row 和 bias。
 3. `conv_shared_input_buffer.v`：**输入缓存**，使用 SRAM 保存完整输入图，并维护当前 `pos` 对应的 `14` 行工作集（Register），执行预取逻辑和双帧缓存逻辑。
 4. `conv_core.v`：**计算核心**，按 `{pos, group}` 发出 token，驱动输入工作集切换、参数读取、MAC 与量化链路。
-5. `conv_tile_mac.v`：**MAC 核心**，基于 `11` 级 `row PE` 串接，计算一个完整 `4(ch) x 2(row) x 4(col)` INT32 tile。
+5. `conv_tile_mac.v`：**MAC 核心**，基于 `11` 级 `row PE` 串接，计算一个完整 `4(ch) x 4(row) x 4(col)` INT32 tile。
 
 **注意：**
 在 v2.5 版本中，由于 DWConv 子系统已经设计完成并且通过了测试，Conv 和 DWConv 共享的大量公共模块（例如：SRAM 行为模型、参数 bank 组织结构、bias 打拍模块、元数据打拍模块等）被收集到 `utils/` 目录下，例如：
@@ -78,7 +78,7 @@ v2.6 及之前版本中，我们不妨设想，**输入层向 Conv 层提供的�
 
 ### 3.2 顶层模块：conv_subsystem
 
-`conv_subsystem` 是 Conv 子系统的顶层模块，主要功能是连接输入缓存、参数 SRAM 和计算核心，完成整个 Conv 层的计算流程，并且向下一级提供输出数据和状态信号。
+`conv_subsystem` 是 Conv 子系统的顶层模块，主要功能是连接输入缓存、参数 ROM 和计算核心，完成整个 Conv 层的计算流程，并且向下一级提供输出数据和状态信号。
 
 ![](./conv_subsystem.svg)
 
@@ -116,8 +116,8 @@ v2.6 及之前版本中，我们不妨设想，**输入层向 Conv 层提供的�
 3. 一旦某一个 bank 写满，`ready_bank_mask` 中对应的 bit 就会被置位，告诉 `conv_subsystem` 这个 bank 已经准备好了。 
 4. 一旦某一个 bank 被选中消费，就会被标记为 active bank。（**该 Bank 被标记为 active 就代表顶层系统认为之前的 active bank 已经消费完毕了，可以开始写新数据了。本模块无需操心谁是 active 谁是 write bank，一切由顶层系统决定。**）
 
-### 3.4 权重与偏置组织：conv_param_store
-当前 Conv 不是只保存“当前计算正在使用的参数”，而是**在层内 SRAM 中完整保存整个 Conv 层的全部参数**。运行时只是按 group 从中读取当前 token 所需的切片。
+### 3.4 权重与偏置组织：conv_param_store_rom
+当前 Conv 参数采用 ROM 固化，运行时按 group 读取当前 token 所需的切片。
 
 #### 3.4.1 权重 bank
 当前 Conv 权重不是打包成一个超宽单 word，而是拆成 $11$ 个 bank：
@@ -151,13 +151,13 @@ bias 采用 1 个 bank：每个 bank $8(\text{depth})\times 64\text{bit(word)}$
 
 后续 SonicBolt 其余计算层也遵循相同原则。
 
-> 注意: 由于 Memory Compiler 无法提供 depth < 32 的 SRAM，因此我们在实现时，权重 bank 和 bias bank 的 depth 都被扩展到了 32，但实际只有前 8 个地址是有效的。
+> 注意: ROM 初始化文件中，权重为 88 行（11 bank × 8 group），偏置为 8 行（1 bank × 8 group），地址空间与 group 映射保持一致。
 
 ### 3.5 计算核心：conv_core
-conv_core 的主要功能是根据当前的 pos 和 group **发出请求信号、参数地址**，然后**接收**输入缓存和 SRAM 传回的**数据和参数(Token)**，**驱动 MAC 与量化链路**。
+conv_core 的主要功能是根据当前的 pos 和 group **发出请求信号、参数地址**，然后**接收**输入缓存和参数存储返回的**数据和参数(Token)**，**驱动 MAC 与量化链路**。
 
 #### 3.5.1 交互接口
-`conv_core` 与 `conv_shared_input_buffer` 以及 `conv_param_store` 之间的接口为总线直连。
+`conv_core` 与 `conv_shared_input_buffer` 以及 `conv_param_store_rom` 之间的接口为总线直连。
 
 当前版本的接口语义已经调整为：
 
@@ -175,7 +175,7 @@ conv_core 的主要功能是根据当前的 pos 和 group **发出请求信号�
 2. **半窗缓存机制介入**：v2.7 版本引入半窗缓存机制后，以下所有模块的流水级数不变，但是输入输出位宽以及运算单元数量均减半。
 3. `conv_tile_mac_row_mult`：内部包含 2 级流水（局部寄存输入 + 行乘法计算）。11 个模块并行计算对应的 kernel_row 乘加结果，输出 32 个 INT19 的部分和。
    - input: 2x10x8bit 输入条带，及其对应的 4×7×8bit 卷积核行
-   - output: 4x2×4x19bit 部分和（经内部打拍输出）
+   - output: 4x4×4x19bit 部分和（经内部打拍输出）
 4. `conv_tile_mac_row_add`：作为后续的第 3、4 级流水，对 11 个 kernel_row 的部分和极偏置进行归约。为了切断 12 个操作数构成的庞大加法树，模块内部已被显式分割为两级时序：第一拍对 12 个输入执行两两相加存入 Register 堆，第二拍汇总得出 64 个最终结果。
    - input: 11x(4x2x4x19bit) 部分和
    - output: 4x2x4x32bit 结果
@@ -198,7 +198,7 @@ conv_core 的主要功能是根据当前的 pos 和 group **发出请求信号�
 在阅读 conv 的 RTL 代码时，建议按照以下顺序:
 1. 从顶层 `conv_subsystem.v` 开始，理清各个模块之间的连接关系和数据流向。**此时不必太在意每个 wire 或者 reg 的具体含义以及生命周期，遇到不懂的，先看子模块**。
 2. 阅读 `conv_shared_input_buffer.v`，理解输入 bank SRAM、`shadow cache`、14 行工作集维护、预取逻辑以及输入双帧缓存逻辑。该模块是整个 CNN 项目中控制逻辑最复杂的模块，建议阅读时多画图理解。
-3. 阅读 `conv_param_store.v`，理解权重和偏置的 bank 组织结构
+3. 阅读 `conv_param_store_rom.v`，理解权重和偏置的 bank 组织结构
 4. 阅读 `conv_core.v`（**核心**），理解 token 的发出逻辑，以及 `conv_tile_mac` 和 `rescale_relu` 的调用关系。这个模块是整个第一层 Conv 子系统的计算和调度核心，它负责发出请求信号、地址，接受数据，执行卷积和量化计算。同 `conv_subsystem.v` 一样，不必先深究每个 wire 或 reg 的含义，简单理一理子模块连接关系，然后先看子模块。
 5. 阅读 `conv_tile_mac.v`，理解 `conv_core` 内部的 MAC 计算细节。这个模块是负责执行卷积算术的核心，经历了布线层面的深度抗拥塞优化（v2.2）：打散了外部寄存器改为局部锁存，并将超大加法树截断为多级流水。增加输入双帧缓存提升吞吐（v2.6）；增加半窗缓存消除重复计算、减小面积开销（v2.4）。配合模块及其子模块内部的详细注释，理解起来并不难。
 6. 阅读 `utils/rescale_relu.v`，理解 `conv_core` 内部的量化激活计算细节。这个模块是整个第一层 Conv 子系统的量化激活核心，它负责执行量化和 ReLU，包含两级流水线：Rescale、ReLU+饱和截断。同 `conv_tile_mac.v`，这个模块理解起来也很容易。

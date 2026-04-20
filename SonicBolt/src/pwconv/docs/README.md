@@ -39,9 +39,9 @@ PWConv 的调度顺序具有以下特征：
 
 ### 3.1 模块列表
 当前 `SonicBolt/src/pwconv` 目录中，主通路模块如下：
-1. `pwconv_subsystem.v`：**顶层模块**，连接输入缓存、参数 SRAM 和计算核心，控制外围读写。
+1. `pwconv_subsystem.v`：**顶层模块**，连接输入缓存、参数 ROM 和计算核心。
 2. `pwconv_input_buffer.v`：**双级缓存结构**，用于暂存相同 pos 下的所有通道。
-3. `pwconv_param_store.v`：**片上 SRAM 封装**，保存整层 PWConv 权重和偏置。
+3. `pwconv_param_store_rom.v`：**片上 ROM 封装**，固化整层 PWConv 权重和偏置。
 4. `pwconv_core.v`：**计算核心**，主调度器，处理输入接收统计、发货调度、以及元数据同步。
 5. `pwconv_tile_mac.v` 及附属 `bank_mult.v` / `bank_accum.v` / `bias_add.v`：负责将发来的 128 字节权重与 128 字节输入进行并行点积，最终合并、加偏置形成 4(ch) 通道结果。
 
@@ -50,7 +50,7 @@ PWConv 的调度顺序具有以下特征：
 ![](./pwconv_subsystem.svg)
 
 `pwconv_subsystem` 是 PWConv 系统的直接对外顶层。
-- **对外暴露参数写接口**，用于主存控制器挂载加载 weight 与 bias。
+- **参数由 ROM 固化**，不再暴露 weight/bias 写接口。
 - **接收** DWConv 发送的带有 `valid`、`in_stream_fire` 和 `pos\group`的 tile 端点。
 - **配置系统量化参数**：`M0` 与 `SHIFT_N` 用于 PWConv 内的结果重新量化与缩放。
 
@@ -60,9 +60,9 @@ PWConv 的调度顺序具有以下特征：
 - **Even Buffer**: `pos` % 2 == 0 时的容纳容器。
 - **Odd Buffer**: `pos` % 2 == 1 时的容纳容器。
 
-### 3.4 权重组织结构：pwconv_param_store
+### 3.4 权重组织结构：pwconv_param_store_rom
 通过一维展开（flatten）管理方式存储 32×32 的权重网络：
-- 一次读取即可针对给定目标`group` 并发吐出其 4 个通道所有所需的源特征图乘法比率（1024bit）。电路实现上，分为了8个 bank，每个 bank 字长128bit，深度为 8 ，但是 SRAM 能提供的最低深度为 32 ，因此被迫由 32 深度的 SRAM 模拟。 
+- 一次读取即可针对给定目标`group` 并发吐出其 4 个通道所有所需的源特征图乘法比率（1024bit）。电路实现上分为 8 个 bank，每个 bank 字长 128bit，深度为 8。 
 - 偏置存储在另一组独立内存块中（16bit 单字× 4 通道 = 64bit 获取）。
 
 ### 3.5 计算核心与 MAC

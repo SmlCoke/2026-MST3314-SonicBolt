@@ -124,7 +124,7 @@ module conv_tile_mac_row_mult (
                         .out_prod(product_6)
                     );
 
-                    assign product_0_ext = {{3{product_0[15]}}, product_0};
+                    assign product_0_ext = {{3{product_0[15]}}, product_0}; // 将 INT16 的乘积拓展到 INT19，符号位扩展
                     assign product_1_ext = {{3{product_1[15]}}, product_1};
                     assign product_2_ext = {{3{product_2[15]}}, product_2};
                     assign product_3_ext = {{3{product_3[15]}}, product_3};

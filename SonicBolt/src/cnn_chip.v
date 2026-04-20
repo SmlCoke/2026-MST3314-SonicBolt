@@ -52,36 +52,6 @@ module cnn_chip #(
 
     wire         net_out_stream_valid;
     wire [63:0]  net_out_stream_data;
-    // 说明:
-    //   下方这些内部“伪配置”连线仅用于综合场景绕开工具对大规模常量端口折叠时的崩溃问题。
-    //   课程当前阶段把参数 SRAM 视作片内已写好（ROM 使用），因此这里不再对外暴露参数写 PAD。
-    //   为避免 ZenSyn 在常量传播阶段崩溃，这里使用非恒定信号驱动 cnn 的参数写端口。
-    //   其中 wr_en 只在复位期间拉高，正常运行阶段保持为 0。
-    wire         cfg_wr_en;
-    wire [4:0]   cfg_bank5;
-    wire [2:0]   cfg_bank3;
-    wire [1:0]   cfg_bank2;
-    wire [2:0]   cfg_addr3;
-    wire [6:0]   cfg_addr7;
-    wire [7:0]   cfg_addr8;
-    wire [223:0] cfg_data224;
-    wire [127:0] cfg_data128;
-    wire [95:0]  cfg_data96;
-    wire [63:0]  cfg_data64;
-    wire [31:0]  cfg_data32;
-
-    assign cfg_wr_en   = ~net_rst_n;
-    assign cfg_bank5   = net_img_wr_addr;
-    assign cfg_bank3   = net_img_wr_addr[2:0];
-    assign cfg_bank2   = net_img_wr_addr[1:0];
-    assign cfg_addr3   = net_img_wr_addr[2:0];
-    assign cfg_addr7   = {net_img_wr_en, net_img_wr_addr, net_img_wr_en};
-    assign cfg_addr8   = {net_img_wr_en, net_img_wr_addr, net_img_wr_addr[1:0]};
-    assign cfg_data224 = {net_img_wr_row_data, net_img_wr_row_data, net_img_wr_row_data[63:0]};
-    assign cfg_data128 = {net_img_wr_row_data, net_img_wr_row_data[47:0]};
-    assign cfg_data96  = {net_img_wr_row_data, net_img_wr_row_data[15:0]};
-    assign cfg_data64  = net_img_wr_row_data[63:0];
-    assign cfg_data32  = net_img_wr_row_data[31:0];
 
     PIW PIW_clk(.PAD(clk), .C(net_clk));
     PIW PIW_rst_n(.PAD(rst_n), .C(net_rst_n));
@@ -134,45 +104,6 @@ module cnn_chip #(
         .img_wr_row_data(net_img_wr_row_data),
         .img_wr_commit(net_img_wr_commit),
         .img_wr_ready(net_img_wr_ready),
-
-        .conv_weight_wr_en(cfg_wr_en),
-        .conv_weight_wr_bank(cfg_bank5),
-        .conv_weight_wr_addr(cfg_addr3),
-        .conv_weight_wr_data(cfg_data224),
-
-        .dwconv_weight_wr_en(cfg_wr_en),
-        .dwconv_weight_wr_bank(cfg_bank2),
-        .dwconv_weight_wr_addr(cfg_addr3),
-        .dwconv_weight_wr_data(cfg_data96),
-
-        .pwconv_weight_wr_en(cfg_wr_en),
-        .pwconv_weight_wr_bank(cfg_bank3),
-        .pwconv_weight_wr_addr(cfg_addr3),
-        .pwconv_weight_wr_data(cfg_data128),
-
-        .conv_bias_wr_en(cfg_wr_en),
-        .conv_bias_wr_bank(cfg_bank3[0]),
-        .conv_bias_wr_addr(cfg_addr3),
-        .conv_bias_wr_data(cfg_data64),
-
-        .dwconv_bias_wr_en(cfg_wr_en),
-        .dwconv_bias_wr_bank(cfg_bank3[0]),
-        .dwconv_bias_wr_addr(cfg_addr3),
-        .dwconv_bias_wr_data(cfg_data64),
-
-        .pwconv_bias_wr_en(cfg_wr_en),
-        .pwconv_bias_wr_bank(cfg_bank3[0]),
-        .pwconv_bias_wr_addr(cfg_addr3),
-        .pwconv_bias_wr_data(cfg_data64),
-
-        .fc_weight_wr_en(cfg_wr_en),
-        .fc_weight_wr_addr(cfg_addr7),
-        .fc_weight_wr_data(cfg_data64),
-        .fc_bias_wr_en(cfg_wr_en),
-        .fc_bias_wr_data(cfg_data32),
-        .sigmoid_lut_wr_en(cfg_wr_en),
-        .sigmoid_lut_wr_addr(cfg_addr8),
-        .sigmoid_lut_wr_data(cfg_data32),
 
         .out_stream_valid(net_out_stream_valid),
         .out_stream_data(net_out_stream_data)

@@ -10,7 +10,7 @@
  *
  * 设计定位:
  *   - 本模块只负责 token 调度、输入工作集切换时机、参数读时机以及后级计算模块拼接。
- *   - Conv1 整层参数保存在独立的 conv_param_store 中。
+ *   - Conv1 整层参数保存在独立的 conv_param_store_rom 中。
  *   - 输入特征图的整帧缓存和工作集维护保存在 conv_shared_input_buffer 中。
  *
  * 当前数据流:

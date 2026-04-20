@@ -3,7 +3,7 @@
  * 模块名称: pwconv_subsystem
  * 作者: SonicBolt 团队
  * 日期: 2026-04-13
- * 版本: v1.3
+ * 版本: v1.4
  *
  * 功能概述:
  *   PWConv 独立子系统顶层。
@@ -16,6 +16,7 @@
  *   - v1.1 增加了 fire 信号
  *   - v1.2 增加了 launch_safe 输出信号，暴露给顶层用于启动下一轮 conv 计算
  *   - v1.3 删除 launch_safe 信号，下一帧启动时机完全由顶层 cnn 的 guard 计数器以及 conv_core 控制
+ *   - v1.4 参数存储由可写 SRAM 切换为只读 ROM，删除本层写口链路
  */
 module pwconv_subsystem #(
     parameter integer M0      = 69,
@@ -34,18 +35,6 @@ module pwconv_subsystem #(
     input  wire          in_stream_last,   // 输入 tile 是否为最后一个
     input  wire [127:0]  in_stream_data,   // 输入 tile 数据，4 x 2 x 2 x 8bit = 128bit
 
-    // ------------ 权重 SRAM 写控制信号 ------------
-    input  wire          weight_wr_en,     // 权重写使能
-    input  wire [2:0]    weight_wr_bank,   // 权重 bank 编号，当前只使用 0..2
-    input  wire [2:0]    weight_wr_addr,   // 权重 group 地址，8 个 group 需要 3bit
-    input  wire [127:0]  weight_wr_data,   // 权重写数据，4 x 4 x 8bit = 128bit
-
-    // ------------ 偏置 SRAM 写控制信号 ------------
-    input  wire          bias_wr_en,       // 偏置写使能
-    input  wire          bias_wr_bank,     // 偏置 bank 编号，当前版本只使用 0
-    input  wire [2:0]    bias_wr_addr,     // 偏置 group 地址
-    input  wire [63:0]   bias_wr_data,     // 偏置写数据，4 x 16bit = 64bit
-
     // ---------- 输出数据流接口 ----------
     output wire          out_stream_valid, // 输出 tile 有效
     output wire          out_stream_last,  // 输出 tile 是否为最后一个 token
@@ -58,20 +47,14 @@ module pwconv_subsystem #(
     wire [1023:0] even_pos_data;
     wire [1023:0] odd_pos_data;
 
-    wire          weight_store_wr_en;      // 权重 SRAM 写使能 
-    wire          bias_store_wr_en;        // 偏置 SRAM 写使能 
     wire          capture_en;
 
-    wire          weight_rd_en;            // 权重 SRAM 读使能
-    wire [2:0]    weight_rd_group;         // 权重 SRAM 读地址 
-    wire          bias_rd_en;              // 偏置 SRAM 读使能
-    wire [2:0]    bias_rd_group;           // 偏置 SRAM 读地址
-    wire [8*128-1:0] weight_data_bus;      // 权重 SRAM 读出数据总线
-    wire [63:0]      bias_data_bus;        // 偏置 SRAM 读出数据总线
-
-    // 忙于计算当前图时，禁止覆盖本层参数 SRAM。
-    assign weight_store_wr_en = weight_wr_en && !busy;
-    assign bias_store_wr_en   = bias_wr_en && !busy;
+    wire          weight_rd_en;            // 权重 ROM 读使能
+    wire [2:0]    weight_rd_group;         // 权重 ROM 读地址 
+    wire          bias_rd_en;              // 偏置 ROM 读使能
+    wire [2:0]    bias_rd_group;           // 偏置 ROM 读地址
+    wire [8*128-1:0] weight_data_bus;      // 权重 ROM 读出数据总线
+    wire [63:0]      bias_data_bus;        // 偏置 ROM 读出数据总线
 
     // 仅允许电路在工作状态(busy)并且输入数据有效(valid)时，写入数据到缓冲区
     assign capture_en         = busy && in_stream_valid;
@@ -91,33 +74,21 @@ module pwconv_subsystem #(
         .odd_pos_data(odd_pos_data)       // out: 输入数据总线，来自于奇数pos
     );
 
-    pwconv_param_store u_pwconv_param_store (
+    pwconv_param_store_rom u_pwconv_param_store (
         .clk(clk),
         .rst_n(rst_n),
 
-        // ------------ 权重 SRAM 写控制信号 ------------
-        .weight_wr_en(weight_store_wr_en),      // in: 权重写使能     
-        .weight_wr_bank(weight_wr_bank),        // in: 写入哪个weight bank，当前只使用 0..2
-        .weight_wr_addr(weight_wr_addr),        // in: 写入哪个 group 地址，8 个 group 需要 3bit 
-        .weight_wr_data(weight_wr_data),        // in: 权重写数据，4 x 4 x 8bit = 128bit 
-
-        // ------------ 偏置 SRAM 写控制信号 ------------
-        .bias_wr_en(bias_store_wr_en),          // in: 偏置写使能   
-        .bias_wr_bank(bias_wr_bank),            // in: 写入哪个bias bank，当前版本只允许 0 
-        .bias_wr_addr(bias_wr_addr),            // in: 写入哪个 group 地址 
-        .bias_wr_data(bias_wr_data),            // in: 偏置写数据，4 x 16bit = 64bit 
-
-        // ------------ 权重 SRAM 读控制信号 ------------
+        // ------------ 权重 ROM 读控制信号 ------------
         .weight_rd_en(weight_rd_en),            // in: 权重读使能  
         .weight_rd_group(weight_rd_group),      // in: 读取哪个 group 的权重，地址范围 0..7     
         
-        // ------------ 偏置 SRAM 读控制信号 ------------
+        // ------------ 偏置 ROM 读控制信号 ------------
         .bias_rd_en(bias_rd_en),                // in: 偏置读使能    
         .bias_rd_group(bias_rd_group),          // in: 读取哪个 group 的偏置，地址范围 0..7  
         
-        // ------------ SRAM 读出数据总线 ------------
-        .weight_data_bus(weight_data_bus),      // out: 3 条 kernel row，按3个128bit切片展平
-        .bias_data_bus(bias_data_bus)           // out: 偏置 SRAM 读出数据总线   
+        // ------------ ROM 读出数据总线 ------------
+        .weight_data_bus(weight_data_bus),      // out: 8 个输入group切片，按8个128bit切片展平
+        .bias_data_bus(bias_data_bus)           // out: 偏置 ROM 读出数据总线   
     );
 
     pwconv_core #(
