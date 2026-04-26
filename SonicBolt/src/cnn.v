@@ -116,7 +116,7 @@ module cnn #(
     wire         rst_n_synced = rst_n_sync2;
 
     // v1.6: 由于 conv/dwconv/pwconv 子模块流水线加深（总计 +4 拍），
-    // 保护窗需要相应增大。从 7 增至 12 作为保守起点，仿真后确认最小稳定值。
+    // 保护窗需要相应增大，从 7 增至 9 。
     localparam integer CONV_RELAUNCH_GUARD = 9;
 
     // 当前版本将“Conv 最后一个输出流出”和“Conv 前端 80 个 token 发完”拆开：

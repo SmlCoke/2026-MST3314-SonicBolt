@@ -1,0 +1,20 @@
+D:\Project\CNN-Accelerator-Bak\dev-test\2026-MST3314-SonicBolt\SonicBolt\icc\prompt.txt 和
+D:\Project\CNN-Accelerator-Bak\dev-test\2026-MST3314-SonicBolt\SonicBolt\icc\prompt-2.txt
+
+中的任务你都已经完成了，并且现在通过了仿真验证，功能确保正确。现在我要重新进行综合，请你根据
+
+D:\Project\CNN-Accelerator-Bak\dev-test\2026-MST3314-SonicBolt\SonicBolt\icc\repair.md
+
+中的分析，判断我需不需要修改 D:\Project\CNN-Accelerator-Bak\dev-test\2026-MST3314-SonicBolt\SonicBolt\syn\scripts 下的综合脚本以及约束文件，如果需要，请进行修改。
+
+注意：
+本次任务无需重复阅读prompt.txt和prompt-2.txt中指定的各个文件，只需要阅读：
+- prompt.txt本身
+- prompt-2.txt本身
+- repair.md 
+即可
+
+交付清单：
+修改后的：
+- D:\Project\CNN-Accelerator-Bak\dev-test\2026-MST3314-SonicBolt\SonicBolt\syn\scripts\zs.tcl
+- D:\Project\CNN-Accelerator-Bak\dev-test\2026-MST3314-SonicBolt\SonicBolt\syn\scripts\cnn.sdc
