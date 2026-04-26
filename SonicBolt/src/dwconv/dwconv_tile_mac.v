@@ -2,8 +2,8 @@
 /*
  * 模块名称: dwconv_tile_mac
  * 作者: SonicBolt 团队
- * 日期: 2026-03-30
- * 版本: v1.0
+ * 日期: 2026-04-26
+ * 版本: v1.1
  *
  * 功能概述:
  *   - 对一个 {pos, group} 输入 tile 计算完整的 DWConv 输出 tile。
@@ -12,9 +12,11 @@
  *   - 当前 dwconv 子系统的主计算模块。
  *   - 输入 4(ch)x4(row)x4(col)个INT8 的输入数据，3x4x3x8 的 weight 以及 4x16 的bias
  *   - 输出 4 个通道、每通道 2x2 空间位置的 INT32 累加结果。
- * 
- * 版本定位: 
+ *
+ * 版本定位:
  *   - v1.0 初始化
+ *   - v1.1 row_mult v1.2 内部新增 product 寄存器(+1 拍)；本模块新增 stage2a meta/bias 打拍以对齐，
+ *     总流水从 3 级增至 4 级。
  */
 module dwconv_tile_mac (
     input  wire                clk,             // 时钟
@@ -54,18 +56,26 @@ module dwconv_tile_mac (
     // stage1: 偏置打拍结果
     wire [4*16-1:0]     stage1_bias_bus;
 
+    // ---------- stage2a: 中间补偿级，对齐 row_mult v1.2 内部新增的 product 寄存器 ---------
+    wire [4*16-1:0]     stage2a_bias_bus;
+    wire                stage2a_valid;
+    wire                stage2a_last;
+    wire [3:0]          stage2a_pos;
+    wire [2:0]          stage2a_group;
+    wire                stage2a_fire;
+
     // ---------- stage2: 11 个 row_mult 单元计算结果 ---------
     // 4(ch) × 2(row) × 2(col) × 18(width) = 288bit
     wire [4*2*2*18-1:0]    row_sum_bus_0;
     wire [4*2*2*18-1:0]    row_sum_bus_1;
     wire [4*2*2*18-1:0]    row_sum_bus_2;
-    
+
     // stage2_row_sum_bus 是连线关系，无组合逻辑开销
     wire [3*4*2*2*18-1:0]  stage2_row_sum_bus;
-    
+
     // stage2: 偏置打拍结果
     wire [4*16-1:0]     stage2_bias_bus;
-    
+
     // stage2: 元数据打拍结果
     wire                stage2_valid;
     wire                stage2_last;
@@ -155,8 +165,8 @@ module dwconv_tile_mac (
 
     assign stage2_row_sum_bus = {row_sum_bus_2, row_sum_bus_1, row_sum_bus_0};
 
-    // stage2: 元数据打拍
-    meta_pipe u_meta_pipe_stage2 (
+    // v1.1: stage2a —— 补偿 row_mult v1.2 内部新增的 product 寄存器延迟
+    meta_pipe u_meta_pipe_stage2a (
         .clk(clk),
         .rst_n(rst_n),
         .in_valid(stage1_valid),
@@ -164,6 +174,29 @@ module dwconv_tile_mac (
         .in_pos(stage1_pos),
         .in_group(stage1_group),
         .in_fire(stage1_fire),
+        .out_valid(stage2a_valid),
+        .out_last(stage2a_last),
+        .out_pos(stage2a_pos),
+        .out_group(stage2a_group),
+        .out_fire(stage2a_fire)
+    );
+
+    bias_pipe u_bias_pipe_stage2a (
+        .clk(clk),
+        .rst_n(rst_n),
+        .in_bias_bus(stage1_bias_bus),
+        .out_bias_bus(stage2a_bias_bus)
+    );
+
+    // stage2: 元数据打拍
+    meta_pipe u_meta_pipe_stage2 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .in_valid(stage2a_valid),
+        .in_last(stage2a_last),
+        .in_pos(stage2a_pos),
+        .in_group(stage2a_group),
+        .in_fire(stage2a_fire),
         .out_valid(stage2_valid),
         .out_last(stage2_last),
         .out_pos(stage2_pos),
@@ -175,7 +208,7 @@ module dwconv_tile_mac (
     bias_pipe u_bias_pipe_stage2 (
         .clk(clk),
         .rst_n(rst_n),
-        .in_bias_bus(stage1_bias_bus),
+        .in_bias_bus(stage2a_bias_bus),
         .out_bias_bus(stage2_bias_bus)
     );
 

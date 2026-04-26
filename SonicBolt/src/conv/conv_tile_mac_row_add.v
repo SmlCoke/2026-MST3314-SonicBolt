@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_tile_mac_row_add
  * 作者: SonicBolt 团队
- * 日期: 2026-04-12
- * 版本: v3.3
+ * 日期: 2026-04-26
+ * 版本: v3.4
  *
  * 功能概述:
  *   对 11 个 kernel_row 的部分和做跨行归约，生成 4ch x 2x4 半窗的最终 INT32 累加结果。
@@ -17,7 +17,7 @@
  *   - out_sum_bus 含 32 个 INT32，总宽 1024bit。
  *
  * 设计说明:
- *   - 偏置广播规则改为“每个通道覆盖 8 个空间点”，对应半窗 2x4。
+ *   - 偏置广播规则改为”每个通道覆盖 8 个空间点”，对应半窗 2x4。
  *   - 仍保留两级流水，降低 11 路归约的组合深度。
  *
  * 版本定位:
@@ -25,6 +25,8 @@
  *   - v3.2 为了降低综合复杂度，计算被拆成小单元，并用 generate 展开。
  *   - v3.3 修改以适配半窗缓存，主要改动为砍掉一半输入带宽（11 x 1216->11 x 608）
  *     以及一半的加法计算量（64组 11 x INT19 + INT16 -> 32组 11 x INT19 + INT16）
+ *   - v3.4 stage2_cell 升级为 v2.0（L1→reg→L2），cell 内部增加 1 拍；
+ *     row_add 总流水从 2 拍增至 3 拍（stage1 寄存器 + cell 内部 reg + stage2 输出寄存器）。
  */
 module conv_tile_mac_row_add (
     input  wire                clk,            // 时钟
@@ -120,7 +122,10 @@ module conv_tile_mac_row_add (
             assign stage1_partial_bus_comb[(IDX*120 + 100) +: 20] = p5;
 
             // 例化 stage 2 的加法树单元，输入 6 组部分和，输出最终结果。
+            // v3.4: cell 内部增加 1 拍流水，需接入 clk/rst_n
             conv_tile_mac_reduce11_stage2_cell u_stage2_cell (
+                .clk(clk),
+                .rst_n(rst_n),
                 .partial_0(partial_0[IDX]),
                 .partial_1(partial_1[IDX]),
                 .partial_2(partial_2[IDX]),
@@ -157,7 +162,8 @@ module conv_tile_mac_row_add (
         end
     end
 
-    // stage2: 汇总 6 组部分和并输出最终半窗结果。
+    // v3.4: stage2 cell v2.0 内部有 1 拍流水（L1→cell_reg→L2+L3），
+    // 本级的 out_sum_bus 直接捕获 cell 组合输出即可补偿该延迟。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             out_sum_bus <= {1024{1'b0}};

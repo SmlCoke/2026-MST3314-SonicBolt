@@ -9,6 +9,8 @@ report_constraint -all
 # Preparing for Clock Tree Synthesis  #
 #######################################
 set_clock_tree_options -target_skew 0.3
+# C5: 增加 CTS 约束 —— max_fanout / max_transition / max_capacitance
+set_clock_tree_options -max_fanout 32 -max_transition 1.5 -max_capacitance 0.5
 set_clock_uncertainty 0.5 [all_clocks]
 #source ndr.tcl
 report_clock_tree -settings
@@ -20,7 +22,8 @@ check_clock_tree
 # Perform Clock Tree Synthesis  #
 #################################
 
-clock_opt -only_cts -no_clock_route -update_clock_latency
+# C5: 提高 CTS 优化 effort
+clock_opt -only_cts -no_clock_route -update_clock_latency -effort high
 report_clock_tree -summary
 report_clock_timing -type skew -significant_digits 3
 report_constraint -all

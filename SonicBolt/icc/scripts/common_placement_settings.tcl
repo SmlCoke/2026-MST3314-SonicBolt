@@ -23,10 +23,9 @@ remove_pnet_options
 set_pnet_options -partial {METAL2 METAL3 METAL4}
 report_pnet_options
 
-## Improved congestion analysis by using Global Route info 
-# echo "SCRIPT-Info : Enabling Global Gouter during placement"
-# set_app_var placer_enable_enhanced_router true 
+## C4: 使能 enhanced router 改善拥塞分析
+echo "SCRIPT-Info : Enabling Global Router during placement"
+set_app_var placer_enable_enhanced_router true
 
-## it is recommended to use the default of the tool
-## in case it needs to change ( e.g. for low utlization designs), use the command below :
- # set_congestion_options -max_util 0.85
+## C4: 设置拥塞驱动的最大利用率
+set_congestion_options -max_util 0.80

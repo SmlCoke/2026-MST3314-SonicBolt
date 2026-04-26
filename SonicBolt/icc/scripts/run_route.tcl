@@ -11,8 +11,13 @@ report_tlu_plus_files
 check_legality
 verify_pg_nets
 
-set_route_zrt_common_options -post_detail_route_redundant_via_insertion medium
+# C6: 提高 redundant via 插入级别，增强 SI 分析
+set_route_zrt_common_options -post_detail_route_redundant_via_insertion high
 set_route_zrt_detail_options -optimize_wire_via_effort_level high
+
+# C6: 使能完整的 SI 分析选项
+set_si_options -delta_delay true -route_xtalk_prevention true
+set_si_options -min_delta_delay true -static_noise true
 
 report_routing_rules; 
 # report routing rules

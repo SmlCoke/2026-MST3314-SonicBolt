@@ -3,7 +3,7 @@
  * 模块名称: conv_tile_mac
  * 作者: SonicBolt 团队
  * 日期: 2026-04-26
- * 版本: v2.5
+ * 版本: v2.6
  *
  * 功能概述:
  *   计算一个 {pos, group} token 对应的 Conv1 半窗结果。
@@ -35,6 +35,8 @@
  *   - v2.4 实现了半窗缓存，将 INT8 乘法器数量从 4928 砍到 2464，期望减小逻辑综合优化难度，减少综合时间
  *   - v2.5 配合 row_mult v4.5 的流水线升级（内部从 2 级增至 4 级），增加 2 级 meta/bias 流水打拍，
  *     维持数据、元数据、偏置三者的时序对齐。总流水级从 4 级增至 6 级。
+ *   - v2.6 row_add v3.4 内部 stage2_cell 增加 1 拍，row_add 总流水从 2 级增至 3 级；
+ *     本模块新增 stage7 meta_pipe 打拍以对齐。总流水级从 6 级增至 7 级。
  */
 module conv_tile_mac (
     input  wire                clk,             // 时钟
@@ -123,6 +125,13 @@ module conv_tile_mac (
     wire [3:0] stage6_pos;
     wire [2:0] stage6_group;
     wire       stage6_fire;
+
+    // v2.6: stage7 —— 新增一级 meta 打拍，补偿 row_add v3.4 增加的流水级
+    wire       stage7_valid;
+    wire       stage7_last;
+    wire [3:0] stage7_pos;
+    wire [2:0] stage7_group;
+    wire       stage7_fire;
 
 
     // ---------------------------------------------------------------------
@@ -381,10 +390,30 @@ module conv_tile_mac (
         .out_fire(stage6_fire)     // out: 打一拍后的 fire
     );
 
-    assign out_valid = stage6_valid;
-    assign out_last  = stage6_last;
-    assign out_pos   = stage6_pos;
-    assign out_group = stage6_group;
-    assign out_fire  = stage6_fire;
+    // v2.6: stage7 —— 补偿 row_add v3.4 内部新增的 1 拍流水
+    meta_pipe u_meta_pipe_stage7 (
+        .clk(clk),
+        .rst_n(rst_n),
+
+        // ---------- 输入元数据 ----------
+        .in_valid(stage6_valid),
+        .in_last(stage6_last),
+        .in_pos(stage6_pos),
+        .in_group(stage6_group),
+        .in_fire(stage6_fire),
+
+        // ---------- 输出元数据 ----------
+        .out_valid(stage7_valid),
+        .out_last(stage7_last),
+        .out_pos(stage7_pos),
+        .out_group(stage7_group),
+        .out_fire(stage7_fire)
+    );
+
+    assign out_valid = stage7_valid;
+    assign out_last  = stage7_last;
+    assign out_pos   = stage7_pos;
+    assign out_group = stage7_group;
+    assign out_fire  = stage7_fire;
 
 endmodule

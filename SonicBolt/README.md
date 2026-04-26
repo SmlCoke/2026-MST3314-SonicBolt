@@ -1,7 +1,7 @@
-# SonicBolt CNN Accelerator IP - CNN-PD-v1.0
+# SonicBolt CNN Accelerator IP - CNN-PD-v1.2
 
-当前项目版本：SonicBolt PD v1.0
-当前版本发布日期：2026-04-14
+当前项目版本：SonicBolt PD v1.2
+当前版本发布日期：2026-04-26
 
 ---
 
@@ -98,6 +98,8 @@ MaxPool 层的输出是一个 $9\times 32$ 的二维张量，它有 $32$ 个通�
 
 在当前版本(PD-v1.0)中，删除了模块对外暴露的参数 SRAM 写接口。本设计无需考虑 SRAM 的写入总线，为防止 IO PAD 过多干扰后端设计，故删除了 SRAM 写接口，内部 SRAM 的写入使能信号恒无效。
 除了删除参数 SRAM 暴露的写接口外，其余模块逻辑完全保持不变。
+
+在 **CNN-PD-v1.2** 版本中，我们砍掉了多个模块的关键路径，增加了流水级数，这其中包括 dwconv 和 pwconv 的 MAC 计算模块，以及 post process 的 FC 模块。这使得`guard` 计数器设置被迫提升为 9，才能使得功能正确。因此迭代周期从89扩大至 91。
 
 ## V. 总结
 SonicBolt 作为一个面向语音检测的 CNN 硬件加速器系统，采用了高度定制化的流式执行架构，通过 `pos-group` 的**二维坐标架构**和**五大元数据的流协议**，实现了全系统的无等待、无 FIFO 缓冲的流水线计算。当前版本已经实现了 Conv、DWConv、PWConv 和 Post Process 四个核心子系统，并且在处理单张 Feature Map 时在功能和性能上达到了预期目标。下一步将进一步优化连续性，进一步提升双帧缓存的收益，从而**真正释放系统的吞吐能力**，向极限性能指标靠拢。

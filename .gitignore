@@ -68,7 +68,3 @@ SonicBolt/syn/docs/
 # 物理设计相关文件夹
 /SonicBolt/icc/design/
 /SonicBolt/icc/work/
-
-# AI 交互
-*prompt*
-/SonicBolt/icc/repair.md

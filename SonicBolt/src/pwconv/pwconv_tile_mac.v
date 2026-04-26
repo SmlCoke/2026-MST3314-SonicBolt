@@ -2,17 +2,19 @@
 /*
  * 模块名称: pwconv_tile_mac
  * 作者: SonicBolt 团队
- * 日期: 2026-04-12
- * 版本: v3.1
+ * 日期: 2026-04-26
+ * 版本: v3.2
  *
  * 功能概述:
  *   - 每拍处理一个完整 32ch x 2x2 输入 tile（8 个输入 group 全量参与计算）。
  *   - 每拍只计算一个输出 group（4 个卷积核）的 16 个 INT32 结果。
- *   - 采用 4 级流水：bank_mult -> bank_accum -> bias_add + metadata 对齐。
+ *   - 采用 6 级流水：bank_mult -> bank_accum -> bias_add + metadata 对齐。
  *
  * 版本定位:
  *   - v1.0~v3.1 暂时缺失
- *   
+ *   - v3.2 bank_mult v1.3(+1 拍) + bank_accum v1.2(+1 拍)；
+ *     新增 stage2a/stage2b/stage3a meta/bias 打拍以对齐，
+ *     总流水从 4 级增至 6 级。
  */
 module pwconv_tile_mac (
     input  wire               clk,             // 时钟
@@ -45,8 +47,6 @@ module pwconv_tile_mac (
     reg [1023:0]      stage1_tile_data;
     reg [8*128-1:0]   stage1_weight_data;
     reg [63:0]        stage1_bias_data;
-    wire [63:0]       stage2_bias_data;
-    wire [63:0]       stage3_bias_data;
 
     wire        stage1_valid;
     wire        stage1_last;
@@ -54,24 +54,43 @@ module pwconv_tile_mac (
     wire [2:0]  stage1_group;
     wire        stage1_fire;
 
-    // ---------- stage2: 8 输入 group 局部点积 ----------
+    // v3.2: stage2a —— 补偿 bank_mult v1.3 内部新增的 product 寄存器
+    wire [63:0]       stage2a_bias_data;
+    wire        stage2a_valid;
+    wire        stage2a_last;
+    wire [3:0]  stage2a_pos;
+    wire [2:0]  stage2a_group;
+    wire        stage2a_fire;
+
+    // v3.2: stage2b —— 补偿 bank_mult v1.3 → 输出对齐 bank_accum 输入
+    wire [63:0]       stage2b_bias_data;
+    wire        stage2b_valid;
+    wire        stage2b_last;
+    wire [3:0]  stage2b_pos;
+    wire [2:0]  stage2b_group;
+    wire        stage2b_fire;
+
+    // ---------- stage2: bank_mult 局部点积 ----------
     wire [128*18-1:0] stage2_partial_bus;
 
-    wire        stage2_valid;
-    wire        stage2_last;
-    wire [3:0]  stage2_pos;
-    wire [2:0]  stage2_group;
-    wire        stage2_fire;
+    // v3.2: stage3a —— 补偿 bank_accum v1.2 内部新增的 reduce8 寄存器
+    wire [63:0]       stage3a_bias_data;
+    wire        stage3a_valid;
+    wire        stage3a_last;
+    wire [3:0]  stage3a_pos;
+    wire [2:0]  stage3a_group;
+    wire        stage3a_fire;
 
     // ---------- stage3: 跨 8 输入 group 归约 ----------
     wire [16*21-1:0] stage3_accum_bus;
+    wire [63:0]      stage3b_bias_data;
 
     wire       stage3_accum_valid;
-    wire       stage3_meta_valid;
-    wire       stage3_last;
-    wire [3:0] stage3_pos;
-    wire [2:0] stage3_group;
-    wire       stage3_fire;
+    wire       stage3b_valid;
+    wire       stage3b_last;
+    wire [3:0] stage3b_pos;
+    wire [2:0] stage3b_group;
+    wire       stage3b_fire;
 
     // ---------- stage4: bias 叠加 ----------
     wire [16*32-1:0] stage4_accum_bus;
@@ -112,6 +131,52 @@ module pwconv_tile_mac (
         .out_fire(stage1_fire)
     );
 
+    // v3.2: stage2a meta/bias —— bank_mult product 寄存器对齐
+    meta_pipe u_meta_pipe_stage2a (
+        .clk(clk),
+        .rst_n(rst_n),
+        .in_valid(stage1_valid),
+        .in_last(stage1_last),
+        .in_pos(stage1_pos),
+        .in_group(stage1_group),
+        .in_fire(stage1_fire),
+        .out_valid(stage2a_valid),
+        .out_last(stage2a_last),
+        .out_pos(stage2a_pos),
+        .out_group(stage2a_group),
+        .out_fire(stage2a_fire)
+    );
+
+    bias_pipe u_bias_pipe_stage2a (
+        .clk(clk),
+        .rst_n(rst_n),
+        .in_bias_bus(stage1_bias_data),
+        .out_bias_bus(stage2a_bias_data)
+    );
+
+    // v3.2: stage2b meta/bias —— bank_mult 输出寄存器 / bank_accum 输入对齐
+    meta_pipe u_meta_pipe_stage2b (
+        .clk(clk),
+        .rst_n(rst_n),
+        .in_valid(stage2a_valid),
+        .in_last(stage2a_last),
+        .in_pos(stage2a_pos),
+        .in_group(stage2a_group),
+        .in_fire(stage2a_fire),
+        .out_valid(stage2b_valid),
+        .out_last(stage2b_last),
+        .out_pos(stage2b_pos),
+        .out_group(stage2b_group),
+        .out_fire(stage2b_fire)
+    );
+
+    bias_pipe u_bias_pipe_stage2b (
+        .clk(clk),
+        .rst_n(rst_n),
+        .in_bias_bus(stage2a_bias_data),
+        .out_bias_bus(stage2b_bias_data)
+    );
+
     // ---------------------------------------------------------------------
     // ------------------------- 第二级流水：stage2 --------------------------
     // ---------------------------------------------------------------------
@@ -124,26 +189,27 @@ module pwconv_tile_mac (
         .out_partial_bus(stage2_partial_bus)
     );
 
-    bias_pipe u_bias_pipe_stage2 (
+    // v3.2: stage3a meta/bias —— bank_accum reduce8 寄存器对齐
+    meta_pipe u_meta_pipe_stage3a (
         .clk(clk),
         .rst_n(rst_n),
-        .in_bias_bus(stage1_bias_data),
-        .out_bias_bus(stage2_bias_data)
+        .in_valid(stage2b_valid),
+        .in_last(stage2b_last),
+        .in_pos(stage2b_pos),
+        .in_group(stage2b_group),
+        .in_fire(stage2b_fire),
+        .out_valid(stage3a_valid),
+        .out_last(stage3a_last),
+        .out_pos(stage3a_pos),
+        .out_group(stage3a_group),
+        .out_fire(stage3a_fire)
     );
 
-    meta_pipe u_meta_pipe_stage2 (
+    bias_pipe u_bias_pipe_stage3a (
         .clk(clk),
         .rst_n(rst_n),
-        .in_valid(stage1_valid),
-        .in_last(stage1_last),
-        .in_pos(stage1_pos),
-        .in_group(stage1_group),
-        .in_fire(stage1_fire),
-        .out_valid(stage2_valid),
-        .out_last(stage2_last),
-        .out_pos(stage2_pos),
-        .out_group(stage2_group),
-        .out_fire(stage2_fire)
+        .in_bias_bus(stage2b_bias_data),
+        .out_bias_bus(stage3a_bias_data)
     );
 
     // ---------------------------------------------------------------------
@@ -153,32 +219,33 @@ module pwconv_tile_mac (
     pwconv_tile_mac_bank_accum u_pwconv_tile_mac_bank_accum (
         .clk(clk),
         .rst_n(rst_n),
-        .in_valid(stage2_valid),
+        .in_valid(stage2b_valid),
         .in_partial_bus(stage2_partial_bus),
         .out_valid(stage3_accum_valid),
         .out_accum_bus(stage3_accum_bus)
     );
 
-    bias_pipe u_bias_pipe_stage3 (
+    // stage3b meta/bias —— bank_accum 输出对齐
+    meta_pipe u_meta_pipe_stage3b (
         .clk(clk),
         .rst_n(rst_n),
-        .in_bias_bus(stage2_bias_data),
-        .out_bias_bus(stage3_bias_data)
+        .in_valid(stage3a_valid),
+        .in_last(stage3a_last),
+        .in_pos(stage3a_pos),
+        .in_group(stage3a_group),
+        .in_fire(stage3a_fire),
+        .out_valid(stage3b_valid),
+        .out_last(stage3b_last),
+        .out_pos(stage3b_pos),
+        .out_group(stage3b_group),
+        .out_fire(stage3b_fire)
     );
 
-    meta_pipe u_meta_pipe_stage3 (
+    bias_pipe u_bias_pipe_stage3b (
         .clk(clk),
         .rst_n(rst_n),
-        .in_valid(stage2_valid),
-        .in_last(stage2_last),
-        .in_pos(stage2_pos),
-        .in_group(stage2_group),
-        .in_fire(stage2_fire),
-        .out_valid(stage3_meta_valid),
-        .out_last(stage3_last),
-        .out_pos(stage3_pos),
-        .out_group(stage3_group),
-        .out_fire(stage3_fire)
+        .in_bias_bus(stage3a_bias_data),
+        .out_bias_bus(stage3b_bias_data)
     );
 
     // ---------------------------------------------------------------------
@@ -189,18 +256,18 @@ module pwconv_tile_mac (
         .clk(clk),
         .rst_n(rst_n),
         .in_accum_bus(stage3_accum_bus),
-        .in_bias_bus(stage3_bias_data),
+        .in_bias_bus(stage3b_bias_data),
         .out_accum_bus(stage4_accum_bus)
     );
 
     meta_pipe u_meta_pipe_stage4 (
         .clk(clk),
         .rst_n(rst_n),
-        .in_valid(stage3_meta_valid),
-        .in_last(stage3_last),
-        .in_pos(stage3_pos),
-        .in_group(stage3_group),
-        .in_fire(stage3_fire),
+        .in_valid(stage3b_valid),
+        .in_last(stage3b_last),
+        .in_pos(stage3b_pos),
+        .in_group(stage3b_group),
+        .in_fire(stage3b_fire),
         .out_valid(stage4_valid),
         .out_last(stage4_last),
         .out_pos(stage4_pos),

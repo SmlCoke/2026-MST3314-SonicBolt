@@ -3,7 +3,7 @@
 # ⚡️SonicBolt PD(声速闪电 • PD Version)
 **数字集成电路设计 · 高性能 CNN 加速器全流程设计**
 
-[![Version](https://img.shields.io/badge/Version-PD_v1.0-blue.svg)]() [![Institution](https://img.shields.io/badge/Institution-SJTU-red.svg)](https://www.sjtu.edu.cn/) [![SmlCoke](https://img.shields.io/badge/SmlCoke-https://smlcoke.com-brightgreen.svg)](https://smlcoke.com) [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![Version](https://img.shields.io/badge/Version-PD_v1.2-blue.svg)]() [![Institution](https://img.shields.io/badge/Institution-SJTU-red.svg)](https://www.sjtu.edu.cn/) [![SmlCoke](https://img.shields.io/badge/SmlCoke-https://smlcoke.com-brightgreen.svg)](https://smlcoke.com) [![License](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
 
 [项目简介](#i-项目简介) • [仓库结构](#ii-仓库结构) • [各模块说明](#iii-各模块说明) • [Quick Start](#iv-quick-start-guide) • [设计进度](#v-设计进度)
 
@@ -74,20 +74,22 @@ CNN-Accelerator/
 └── SonicBolt/                    # ★ RTL 实现（本团队编写）
     ├── data/                     # 测试数据和网络参数，供仿真使用
     ├── docs/                     # 设计文档、模块说明、架构示意图等 
-    └── src/
-        ├── conv/                 # Conv 层 RTL 实现
-        ├── dwconv/               # DWConv 层 RTL 实现
-        ├── pwconv/               # PWConv 层 RTL 实现
-        ├── post_process/         # 后处理层 RTL 实现
-        ├── utils/                # 公共模块（SRAM 封装、流水打拍、量化激活等）
-        ├── cnn.v                 # 顶层模块，连接各子系统
-        ├── cnn_chip.v            # 用于综合的顶层封装，删除了所有的对外 SRAM 接口。
-        ├── cnn_test_tb.v         # 用于验证逐层输出是否正确的 testbench 模块
-        ├── cnn_sim_tb.v          # 用于完整仿真验证的 testbench 模块
-        ├── run_cnn_test_tb.py    # 自动化仿真脚本: 验证功能正确性 
-        ├── run_cnn_sim_tb.py     # 自动化仿真脚本: 完整仿真496个样本
-        ├── run_cnn_tb_common.py  # 自动化仿真脚本中的公共函数（如激励生成、结果验证等）
-        └── README.md             # 详细说明与设计细节
+    ├── src/
+    │   ├── conv/                 # Conv 层 RTL 实现
+    │   ├── dwconv/               # DWConv 层 RTL 实现
+    │   ├── pwconv/               # PWConv 层 RTL 实现
+    │   ├── post_process/         # 后处理层 RTL 实现
+    │   ├── utils/                # 公共模块（SRAM 封装、流水打拍、量化激活等）
+    │   ├── cnn.v                 # 顶层模块，连接各子系统
+    │   ├── cnn_chip.v            # 用于综合的顶层封装，删除了所有的对外 SRAM 接口。
+    │   ├── cnn_test_tb.v         # 用于验证逐层输出是否正确的 testbench 模块
+    │   ├── cnn_sim_tb.v          # 用于完整仿真验证的 testbench 模块
+    │   ├── run_cnn_test_tb.py    # 自动化仿真脚本: 验证功能正确性 
+    │   ├── run_cnn_sim_tb.py     # 自动化仿真脚本: 完整仿真496个样本
+    │   ├── run_cnn_tb_common.py  # 自动化仿真脚本中的公共函数（如激励生成、结果验证等）
+    │   └── README.md             # 详细说明与设计细节
+    ├── syn/                      # 综合相关文件（脚本、约束等）
+    └── icc/                      # IC Compiler 物理设计脚本
 ```
 
 
@@ -231,6 +233,5 @@ python run_cnn_sim_tb.py --start-sample 0 --sample-count 496
 | 架构研究 | 阅读规范、建立 Python 行为模型 | ✅ 完成 |
 | RTL 设计 | Verilog 模块编写（SonicBolt） | ✅ 完成 |
 | 逻辑仿真 | Testbench 编写与功能验证 | ✅ 完成 |
-| 逻辑综合 | Design Compiler，时序/面积/功耗分析 | 🔲 进行中 |
-| 时序分析 | PrimeTime 时序签核 | 🔲 进行中 |
-| 物理设计 | ICC/Encounter 布局布线，后仿真 | 🔲 待开始 |
+| 逻辑综合 | Design Compiler，时序/面积/功耗分析 | ✅ 完成 |
+| 物理设计 | ICC布局布线 | 🔲 进行中 |

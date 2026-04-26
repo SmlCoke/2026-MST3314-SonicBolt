@@ -2,8 +2,8 @@
 /*
  * 模块名称: cnn
  * 作者: SonicBolt 团队
- * 日期: 2026-04-14
- * 版本: v1.5
+ * 日期: 2026-04-26
+ * 版本: v1.6
  *
  * 功能概述:
  *   SonicBolt 顶层 CNN 管线，依次串接:
@@ -22,7 +22,9 @@
  *   - v1.5 删除 pwconv 引入的 launch_safe 信号，改为在顶层 conv_guard_done 保护窗结束时允许下一帧启动。根
  *      据经验回归结果，conv_guard_done 保护窗设置为 7 个周期，可以稳定通过多样本连续仿真测试，并且最大程度压
  *      缩帧间隔以提升吞吐。
- *     
+ *   - v1.6 新增 rst_n 2-FF 同步器(A5)，生成同步复位域。CONV_RELAUNCH_GUARD 因流水线加深从 7 增至 12，
+ *     待仿真验证最小稳定值。
+ *
 
  */
 
@@ -99,11 +101,23 @@ module cnn #(
     reg          relaunch_pending;          // 当前已有待发车帧，等待 Conv 前端准备好
     reg  [3:0]   conv_relaunch_guard;       // issue_done 之后的固定保护窗计数器
 
-    // 经验回归结果：
-    // - 保护窗 = 6 时，多样本连续仿真会串帧
-    // - 保护窗 = 7 时，`run_cnn_test_tb.py` / `run_cnn_sim_tb.py` 均稳定通过
-    // 因此这里取当前验证到的最小稳定值 7 ，把启动间隔压到 89 个周期。
-    localparam integer CONV_RELAUNCH_GUARD = 7;
+    // A5: 2-FF 复位同步器 —— 将异步 rst_n 同步到 clk 域
+    // SDC 中 rst_n 端口维持 set_ideal_network，理想网络终点为同步器第一级。
+    reg          rst_n_sync1, rst_n_sync2;
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            rst_n_sync1 <= 1'b0;
+            rst_n_sync2 <= 1'b0;
+        end else begin
+            rst_n_sync1 <= 1'b1;
+            rst_n_sync2 <= rst_n_sync1;
+        end
+    end
+    wire         rst_n_synced = rst_n_sync2;
+
+    // v1.6: 由于 conv/dwconv/pwconv 子模块流水线加深（总计 +4 拍），
+    // 保护窗需要相应增大。从 7 增至 12 作为保守起点，仿真后确认最小稳定值。
+    localparam integer CONV_RELAUNCH_GUARD = 9;
 
     // 当前版本将“Conv 最后一个输出流出”和“Conv 前端 80 个 token 发完”拆开：
     // - Conv 前端 issue 侧空闲，说明输入缓存 / 参数读口已经可以接下一帧
