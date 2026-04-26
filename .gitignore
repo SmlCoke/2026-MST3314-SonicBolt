@@ -60,3 +60,15 @@ syn_test/
 
 # 涉及部分隐私的笔记文档
 SonicBolt/syn/docs/
+
+# 配置和虚拟环境
+.claude/
+.venv/
+
+# 物理设计相关文件夹
+/SonicBolt/icc/design/
+/SonicBolt/icc/work/
+
+# AI 交互
+*prompt*
+/SonicBolt/icc/repair.md

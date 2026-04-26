@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_tile_mac
  * 作者: SonicBolt 团队
- * 日期: 2026-04-12
- * 版本: v2.4
+ * 日期: 2026-04-26
+ * 版本: v2.5
  *
  * 功能概述:
  *   计算一个 {pos, group} token 对应的 Conv1 半窗结果。
@@ -27,11 +27,14 @@
  * 版本定位:
  *   - v2.0 中，本模块不再在单个 always 中直接完成 77 次 MAC。本模块主要负责流水级拼接，具体计算下沉到子模块。
  *      - 当前流水拆分为: input_stage + 11 个 row_mult + row_reduce_row_add
- *   - v2.1 中，将 input_stage 中数据与权重的打拍下沉到子模块内部，撤销长布线拉扯。此外，将 row_add 由一级流水*     拆分为两级，期望改善布线压力，降低时序拥堵。
- *   - v2.2 相比 v2.1 增加了第二层启动信号 out_stream_fire，当该信号为高时，告诉第二层 SRAM: 
+ *   - v2.1 中，将 input_stage 中数据与权重的打拍下沉到子模块内部，撤销长布线拉扯。此外，将 row_add 由一级流水
+ *     拆分为两级，期望改善布线压力，降低时序拥堵。
+ *   - v2.2 相比 v2.1 增加了第二层启动信号 out_stream_fire，当该信号为高时，告诉第二层 SRAM:
  *     "马上开始准备参数, 下一个周期就要开始计算了"
  *   - v2.3 将所有公共子模块提取（例如bias_pipe, meta_pipe）到 utils/ 目录下
  *   - v2.4 实现了半窗缓存，将 INT8 乘法器数量从 4928 砍到 2464，期望减小逻辑综合优化难度，减少综合时间
+ *   - v2.5 配合 row_mult v4.5 的流水线升级（内部从 2 级增至 4 级），增加 2 级 meta/bias 流水打拍，
+ *     维持数据、元数据、偏置三者的时序对齐。总流水级从 4 级增至 6 级。
  */
 module conv_tile_mac (
     input  wire                clk,             // 时钟
@@ -60,12 +63,12 @@ module conv_tile_mac (
     output wire [4*2*4*32-1:0] out_accum_bus    // 4(ch) x 2(row) x 4(col) x INT32
 );
     // ---------- stage1: 元数据 / 偏置打拍 ----------
-    wire [4*16-1:0] stage1_bias_bus;      // stage1 out: 寄存器打一拍后的偏置总线        
-    wire            stage1_valid;         // stage1 out: 打一拍后的 valid       
-    wire            stage1_last;          // stage1 out: 打一拍后的 last      
-    wire [3:0]      stage1_pos;           // stage1 out: 打一拍后的 pos     
-    wire [2:0]      stage1_group;         // stage1 out: 打一拍后的 group       
-    wire            stage1_fire;          // stage1 out: 打一拍后的 fire      
+    wire [4*16-1:0] stage1_bias_bus;      // stage1 out: 寄存器打一拍后的偏置总线
+    wire            stage1_valid;         // stage1 out: 打一拍后的 valid
+    wire            stage1_last;          // stage1 out: 打一拍后的 last
+    wire [3:0]      stage1_pos;           // stage1 out: 打一拍后的 pos
+    wire [2:0]      stage1_group;         // stage1 out: 打一拍后的 group
+    wire            stage1_fire;          // stage1 out: 打一拍后的 fire
 
     // ---------- stage2: 11 个 row_mult 并行部分和 ----------
     // 4ch x 2row x 4col x 19bit
@@ -92,23 +95,39 @@ module conv_tile_mac (
     wire [2:0]             stage2_group;
     wire                   stage2_fire;
 
-    // ---------- stage3 / stage4: row_add 两级归约 ----------
-    wire       stage3_valid;
-    wire       stage3_last;
-    wire [3:0] stage3_pos;
-    wire [2:0] stage3_group;
-    wire       stage3_fire;
+    // v2.5: stage3 —— 新增一级 meta/bias 打拍，补偿 row_mult v4.5 增加的流水级
+    wire [63:0]            stage3_bias_bus;
+    wire                   stage3_valid;
+    wire                   stage3_last;
+    wire [3:0]             stage3_pos;
+    wire [2:0]             stage3_group;
+    wire                   stage3_fire;
 
-    wire       stage4_valid;
-    wire       stage4_last;
-    wire [3:0] stage4_pos;
-    wire [2:0] stage4_group;
-    wire       stage4_fire;
+    // v2.5: stage4 —— 新增第二级 meta/bias 打拍，补偿 row_mult v4.5 增加的流水级
+    wire [63:0]            stage4_bias_bus;
+    wire                   stage4_valid;
+    wire                   stage4_last;
+    wire [3:0]             stage4_pos;
+    wire [2:0]             stage4_group;
+    wire                   stage4_fire;
+
+    // ---------- stage5 / stage6: row_add 两级归约 ----------
+    wire       stage5_valid;
+    wire       stage5_last;
+    wire [3:0] stage5_pos;
+    wire [2:0] stage5_group;
+    wire       stage5_fire;
+
+    wire       stage6_valid;
+    wire       stage6_last;
+    wire [3:0] stage6_pos;
+    wire [2:0] stage6_group;
+    wire       stage6_fire;
 
 
     // ---------------------------------------------------------------------
     // ------------------------- 第一级流水：stage1 --------------------------
-    // - 偏置和元数据打拍，数据与权重打拍已下沉
+    // - 偏置和元数据打拍，数据与权重打拍已下沉到 row_mult 内部
     // ---------------------------------------------------------------------
 
     // stage1: 偏置与元数据打一拍。
@@ -124,25 +143,26 @@ module conv_tile_mac (
         .rst_n(rst_n),
 
         // ---------- 输入元数据 ----------
-        .in_valid(in_valid),         // in: 当前 token 有效      
-        .in_last(in_last),           // in: 当前 token 是否为整张图最后一个 token    
+        .in_valid(in_valid),         // in: 当前 token 有效
+        .in_last(in_last),           // in: 当前 token 是否为整张图最后一个 token
         .in_pos(in_pos),             // in: 当前 token 的 pos 编号，范围 0~9, 0 表示起始半窗，非有效pos
-        .in_group(in_group),         // in: 当前 token 的 group 编号，范围 0~7      
-        .in_fire(in_fire),           // in: 第二层启动信号    
+        .in_group(in_group),         // in: 当前 token 的 group 编号，范围 0~7
+        .in_fire(in_fire),           // in: 第二层启动信号
 
         // ---------- 输出元数据 ----------
-        .out_valid(stage1_valid),    // out: 打一拍后的 valid      
-        .out_last(stage1_last),      // out: 打一拍后的 last    
-        .out_pos(stage1_pos),        // out: 打一拍后的 pos  
-        .out_group(stage1_group),    // out: 打一拍后的 group      
-        .out_fire(stage1_fire)       // out: 打一拍后的 fire   
+        .out_valid(stage1_valid),    // out: 打一拍后的 valid
+        .out_last(stage1_last),      // out: 打一拍后的 last
+        .out_pos(stage1_pos),        // out: 打一拍后的 pos
+        .out_group(stage1_group),    // out: 打一拍后的 group
+        .out_fire(stage1_fire)       // out: 打一拍后的 fire
     );
 
     // ---------------------------------------------------------------------
     // ------------------------- 第二级流水：stage2 --------------------------
     // - 11 组 row_mult 并行，每组负责计算一行卷积核与对应输入窗口的乘加，输出 4ch x 2row x 4col 的半窗乘积和
     // - bias 和 元数据打拍
-    // - row_mult 单元内部还内置 stage1 的数据和权重打拍
+    // - row_mult v4.5 内部内置 Stage0(输入) + Stage1(乘法) + Stage2(L1加法) + Stage3(输出) 四级流水
+    //   数据/权重输入到 row_sum_bus 输出共 4 拍延迟
     // ---------------------------------------------------------------------
 
     // stage2: 11 条 kernel row 的半窗乘法阵列。
@@ -150,41 +170,41 @@ module conv_tile_mac (
     conv_tile_mac_row_mult u_row_mult_0 (
         .clk(clk), .rst_n(rst_n),
         // 0~1 行输入条带
-        .row_window_data(pos_window_data[2*80-1:0]), 
+        .row_window_data(pos_window_data[2*80-1:0]),
         // 卷积核第一行
-        .weight_row_data(weight_data_bus[224-1:0]),      
+        .weight_row_data(weight_data_bus[224-1:0]),
         .out_row_sum_bus(row_sum_bus_0)
     );
     conv_tile_mac_row_mult u_row_mult_1 (
         .clk(clk), .rst_n(rst_n),
         // 1~2 行输入条带
-        .row_window_data(pos_window_data[3*80-1:1*80]), 
+        .row_window_data(pos_window_data[3*80-1:1*80]),
         // 卷积核第二行
-        .weight_row_data(weight_data_bus[2*224-1:1*224]), 
+        .weight_row_data(weight_data_bus[2*224-1:1*224]),
         .out_row_sum_bus(row_sum_bus_1)
     );
     conv_tile_mac_row_mult u_row_mult_2 (
         .clk(clk), .rst_n(rst_n),
         // 2~3 行输入条带
-        .row_window_data(pos_window_data[4*80-1:2*80]),   
+        .row_window_data(pos_window_data[4*80-1:2*80]),
         // 卷积核第三行
-        .weight_row_data(weight_data_bus[3*224-1:2*224]), 
+        .weight_row_data(weight_data_bus[3*224-1:2*224]),
         .out_row_sum_bus(row_sum_bus_2)
     );
     conv_tile_mac_row_mult u_row_mult_3 (
         .clk(clk), .rst_n(rst_n),
         // 3~4 行输入条带
-        .row_window_data(pos_window_data[5*80-1:3*80]),   
+        .row_window_data(pos_window_data[5*80-1:3*80]),
         // 卷积核第四行
-        .weight_row_data(weight_data_bus[4*224-1:3*224]), 
+        .weight_row_data(weight_data_bus[4*224-1:3*224]),
         .out_row_sum_bus(row_sum_bus_3)
     );
     conv_tile_mac_row_mult u_row_mult_4 (
         .clk(clk), .rst_n(rst_n),
         // 4~5 行输入条带
-        .row_window_data(pos_window_data[6*80-1:4*80]),   
+        .row_window_data(pos_window_data[6*80-1:4*80]),
         // 卷积核第五行
-        .weight_row_data(weight_data_bus[5*224-1:4*224]), 
+        .weight_row_data(weight_data_bus[5*224-1:4*224]),
         .out_row_sum_bus(row_sum_bus_4)
     );
     conv_tile_mac_row_mult u_row_mult_5 (
@@ -264,60 +284,107 @@ module conv_tile_mac (
         .out_bias_bus(stage2_bias_bus)
     );
 
-    // stage3 / stage4: 对 32 个空间点做 11->1 归约。
+    // v2.5: stage3 —— 新增第一级 meta/bias 打拍，补偿 row_mult v4.5 内部增加的乘法打拍级
+    meta_pipe u_meta_pipe_stage3 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .in_valid(stage2_valid),
+        .in_last(stage2_last),
+        .in_pos(stage2_pos),
+        .in_group(stage2_group),
+        .in_fire(stage2_fire),
+        .out_valid(stage3_valid),
+        .out_last(stage3_last),
+        .out_pos(stage3_pos),
+        .out_group(stage3_group),
+        .out_fire(stage3_fire)
+    );
+
+    bias_pipe u_bias_pipe_stage3 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .in_bias_bus(stage2_bias_bus),
+        .out_bias_bus(stage3_bias_bus)
+    );
+
+    // v2.5: stage4 —— 新增第二级 meta/bias 打拍，补偿 row_mult v4.5 内部增加的 L1 加法打拍级
+    meta_pipe u_meta_pipe_stage4 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .in_valid(stage3_valid),
+        .in_last(stage3_last),
+        .in_pos(stage3_pos),
+        .in_group(stage3_group),
+        .in_fire(stage3_fire),
+        .out_valid(stage4_valid),
+        .out_last(stage4_last),
+        .out_pos(stage4_pos),
+        .out_group(stage4_group),
+        .out_fire(stage4_fire)
+    );
+
+    bias_pipe u_bias_pipe_stage4 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .in_bias_bus(stage3_bias_bus),
+        .out_bias_bus(stage4_bias_bus)
+    );
+
+    // stage5 / stage6: 对 32 个空间点做 11->1 归约
+    // row_mult v4.5 输出 (stage2_row_sum_bus) 与 stage4 元数据/偏置对齐
     conv_tile_mac_row_add u_conv_tile_mac_row_add (
         .clk(clk),
         .rst_n(rst_n),
         .in_row_sum_bus(stage2_row_sum_bus),
-        .bias_data_bus(stage2_bias_bus),
+        .bias_data_bus(stage4_bias_bus),
         .out_sum_bus(out_accum_bus)
     );
 
-    // stage3: 元数据打拍
-    meta_pipe u_meta_pipe_stage3 (
+    // stage5: 元数据打拍（原 stage3）
+    meta_pipe u_meta_pipe_stage5 (
         .clk(clk),
         .rst_n(rst_n),
 
         // ---------- 输入元数据 ----------
-        .in_valid(stage2_valid),   // in: 当前 token 有效                  
-        .in_last(stage2_last),     // in: 当前 token 是否为整张图最后一个 token              
-        .in_pos(stage2_pos),       // in: 当前 token 的 pos 编号，范围 0~9, 0 表示起始半窗，非有效pos
-        .in_group(stage2_group),   // in: 当前 token 的 group 编号，范围 0~7                  
-        .in_fire(stage2_fire),     // in: 第二层启动信号              
+        .in_valid(stage4_valid),   // in: 当前 token 有效
+        .in_last(stage4_last),     // in: 当前 token 是否为整张图最后一个 token
+        .in_pos(stage4_pos),       // in: 当前 token 的 pos 编号，范围 0~9, 0 表示起始半窗，非有效pos
+        .in_group(stage4_group),   // in: 当前 token 的 group 编号，范围 0~7
+        .in_fire(stage4_fire),     // in: 第二层启动信号
 
         // ---------- 输出元数据 ----------
-        .out_valid(stage3_valid),  // out: 打一拍后的 valid           
-        .out_last(stage3_last),    // out: 打一拍后的 last          
-        .out_pos(stage3_pos),      // out: 打一拍后的 pos         
-        .out_group(stage3_group),  // out: 打一拍后的 group           
-        .out_fire(stage3_fire)     // out: 打一拍后的 fire         
+        .out_valid(stage5_valid),  // out: 打一拍后的 valid
+        .out_last(stage5_last),    // out: 打一拍后的 last
+        .out_pos(stage5_pos),      // out: 打一拍后的 pos
+        .out_group(stage5_group),  // out: 打一拍后的 group
+        .out_fire(stage5_fire)     // out: 打一拍后的 fire
     );
 
 
-    // stage4: 元数据打拍
-    meta_pipe u_meta_pipe_stage4 (
+    // stage6: 元数据打拍（原 stage4）
+    meta_pipe u_meta_pipe_stage6 (
         .clk(clk),
         .rst_n(rst_n),
 
         // ---------- 输入元数据 ----------
-        .in_valid(stage3_valid),   // in: 当前 token 有效
-        .in_last(stage3_last),     // in: 当前 token 是否为整张图最后一个 token    
-        .in_pos(stage3_pos),       // in: 当前 token 的 pos 编号，范围 0~9, 0 表示起始半窗，非有效pos
-        .in_group(stage3_group),   // in: 当前 token 的 group 编号，范围0~7                         
-        .in_fire(stage3_fire),     // in: 第二层启动信号      
-        
+        .in_valid(stage5_valid),   // in: 当前 token 有效
+        .in_last(stage5_last),     // in: 当前 token 是否为整张图最后一个 token
+        .in_pos(stage5_pos),       // in: 当前 token 的 pos 编号，范围 0~9, 0 表示起始半窗，非有效pos
+        .in_group(stage5_group),   // in: 当前 token 的 group 编号，范围0~7
+        .in_fire(stage5_fire),     // in: 第二层启动信号
+
         // ---------- 输出元数据 ----------
-        .out_valid(stage4_valid),  // out: 打一拍后的 valid       
-        .out_last(stage4_last),    // out: 打一拍后的 last      
-        .out_pos(stage4_pos),      // out: 打一拍后的 pos     
-        .out_group(stage4_group),  // out: 打一拍后的 group       
-        .out_fire(stage4_fire)     // out: 打一拍后的 fire     
+        .out_valid(stage6_valid),  // out: 打一拍后的 valid
+        .out_last(stage6_last),    // out: 打一拍后的 last
+        .out_pos(stage6_pos),      // out: 打一拍后的 pos
+        .out_group(stage6_group),  // out: 打一拍后的 group
+        .out_fire(stage6_fire)     // out: 打一拍后的 fire
     );
 
-    assign out_valid = stage4_valid;
-    assign out_last  = stage4_last;
-    assign out_pos   = stage4_pos;
-    assign out_group = stage4_group;
-    assign out_fire  = stage4_fire;
+    assign out_valid = stage6_valid;
+    assign out_last  = stage6_last;
+    assign out_pos   = stage6_pos;
+    assign out_group = stage6_group;
+    assign out_fire  = stage6_fire;
 
 endmodule
