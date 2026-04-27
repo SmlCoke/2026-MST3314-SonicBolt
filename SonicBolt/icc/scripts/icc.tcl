@@ -31,6 +31,6 @@ set_app_var sh_enable_page_mode false
 source run_data_setup.tcl
 source run_design_planning.tcl
 source run_placement.tcl
-source run_cts.tcl
-source run_route.tcl
-source run_finishing.tcl
+# source run_cts.tcl
+# source run_route.tcl
+# source run_finishing.tcl

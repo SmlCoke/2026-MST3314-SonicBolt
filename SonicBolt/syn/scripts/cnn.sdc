@@ -165,8 +165,10 @@ set_load -pin_load 4.37 [get_ports {out_stream_data[1]}]
 set_load -pin_load 4.37 [get_ports {out_stream_data[0]}]
 set_ideal_network [get_ports rst_n]
 create_clock [get_ports clk]  -period 10  -waveform {0 5}
-set_clock_latency 0.3  [get_clocks clk]
-set_clock_latency -source 4  [get_clocks clk]
+# 网络延迟偏小：由 0.3 ns 修改为 2ns
+set_clock_latency 2.0  [get_clocks clk]
+# 源延迟偏大: 由 4ns 修改为 1.5 ns
+set_clock_latency -source 1.5  [get_clocks clk]
 set_clock_uncertainty 0.5  [get_clocks clk]
 set_clock_transition -min -fall 0.2 [get_clocks clk]
 set_clock_transition -min -rise 0.2 [get_clocks clk]

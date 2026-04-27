@@ -190,8 +190,6 @@ module conv_tile_mac_row_mult (
                             sum_l1_1_s2  <= 19'sd0;
                             sum_l1_2_s2  <= 19'sd0;
                             product_6_s2 <= 19'sd0;
-
-                            out_row_sum_bus     <= {4*2*4*19{1'b0}};
                         end else begin
                             // -------- Stage 1: 乘法结果打拍 --------
                             product_0_s1 <= product_0;
@@ -223,7 +221,7 @@ module conv_tile_mac_row_mult (
         if (!rst_n) begin
             row_window_data_reg <= {2*10*8{1'b0}};
             weight_row_data_reg <= {4*7*8{1'b0}};
-            
+            out_row_sum_bus     <= {4*2*4*19{1'b0}};
         end else begin
             // Stage 0: 输入数据与权重打拍
             row_window_data_reg <= row_window_data;
