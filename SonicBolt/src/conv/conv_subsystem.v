@@ -2,8 +2,8 @@
 /*
  * 模块名称: conv_subsystem
  * 作者: SonicBolt 团队
- * 日期: 2026-04-14
- * 版本: v2.7
+ * 日期: 2026-04-29
+ * 版本: v2.8
  *
  * 功能概述:
  *   Conv 子系统顶层，负责把输入图像缓存、卷积参数存储和 Conv 计算核心串接起来。
@@ -23,6 +23,7 @@
  *   - v2.6 加入双帧缓存机制，实现连续计算，提升吞吐，start 不再直接驱动 conv_core，而是先与 ready bank 状态
  *      组合成 launch_start
  *   - v2.7 加入半窗缓存机制，将 MAC 单元 4928 个乘法器缩减为 2464，解决 14x10 窗口重复计算的问题
+ *   - v2.8 输入数据立即打拍，解决 input2reg 路径过长问题
  *     
  */
 
@@ -73,7 +74,29 @@ module conv_subsystem #(
     wire [3:0]    tile_pos_int;            // Conv 输出元数据：位置
     wire [2:0]    tile_group_int;          // Conv 输出元数据：通道组  
     wire          tile_fire_int;           // Conv 输出的第二层启动提示信号
-    wire [511:0]  tile_data_int;           // Conv 输出数据：量化后的 tile 数据 
+    wire [511:0]  tile_data_int;           // Conv 输出数据：量化后的 tile 数据
+
+    // ---------- 输入信号流水线寄存器 ----------
+    // 解决 placement 阶段 input2reg 路径过长问题：
+    // 将 img_wr_* 输入信号打一拍，使 PI 到第一个寄存器的组合逻辑路径最短化
+    reg            img_wr_en_r;
+    reg [4:0]      img_wr_addr_r;
+    reg [79:0]     img_wr_row_data_r;
+    reg            img_wr_commit_r;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            img_wr_en_r       <= 1'b0;
+            img_wr_addr_r     <= 5'd0;
+            img_wr_row_data_r <= 80'd0;
+            img_wr_commit_r   <= 1'b0;
+        end else begin
+            img_wr_en_r       <= img_wr_en;
+            img_wr_addr_r     <= img_wr_addr;
+            img_wr_row_data_r <= img_wr_row_data;
+            img_wr_commit_r   <= img_wr_commit;
+        end
+    end
 
     // ---------- Ping-Pong 输入缓存控制 ----------
     wire [1:0]       ready_bank_mask;      // 哪个输入 bank 已经装好完整待消费帧
@@ -97,10 +120,10 @@ module conv_subsystem #(
         .rst_n(rst_n),
 
         // ---------- 输入图写入接口 ----------
-        .img_wr_en(img_wr_en),                    // in: 输入图逐行写使能
-        .img_wr_addr(img_wr_addr),                // in: 写入行地址             
-        .img_wr_row_word(img_wr_row_data),        // in: 一行 10 个像素
-        .img_wr_commit(img_wr_commit),            // in: 当前写入 Bank 的30行已经写完，可以被消费
+        .img_wr_en(img_wr_en_r),                    // in: 输入图逐行写使能（已打拍）
+        .img_wr_addr(img_wr_addr_r),                // in: 写入行地址（已打拍）
+        .img_wr_row_word(img_wr_row_data_r),        // in: 一行 10 个像素（已打拍）
+        .img_wr_commit(img_wr_commit_r),            // in: 当前写入 Bank 的30行已经写完，可以被消费（已打拍）
         .img_wr_ready(img_wr_ready),          // out:当前存在可写 bank                       
 
         // ---------- 消费启动接口 ----------
