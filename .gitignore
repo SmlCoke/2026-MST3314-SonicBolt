@@ -60,3 +60,6 @@ syn_test/
 
 # 涉及部分隐私的笔记文档
 SonicBolt/syn/docs/
+
+# 配置文件
+.claude/
