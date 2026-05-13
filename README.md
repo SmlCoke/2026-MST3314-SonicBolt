@@ -173,7 +173,7 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 - CNN-v1.4: SonicBolt v5.5，实现更激进的下一帧启动机制，在**控制逻辑复杂化程度较低**的情况下，将 Conv 层的迭代周期**从 103 进一步压缩至 89** ，成功实现了 $1000k fps$ 的性能指标。
 
 **SonicBolt-PD 分支的各版本：**
-- CNN-PD-v1.0: SonicBolt PD v1.0，全链路基础实现，包含所有功能，删除了参数 SRAM 写接口，并且通过功能仿真验证，迭代周期仍为 89。
+- CNN-PD-v1.0: SonicBolt PD v1.0，基于 SonicBolt v5.5 构建。全链路基础实现，包含所有功能，删除了参数 SRAM 写接口，并且通过功能仿真验证，迭代周期仍为 89。
 - CNN-PD-v1.1 解决了两处长关键路径(IC Compiler报告出时序违例): conv_tile_mac_row_mult 以及 fc_mac，此时迭代周期仍为 89
 - CNN-PD-v1.2 继续清除了 DWConv 层以及 PWConv层的长路径，所有路径压缩至 2A/1M，测试迭代周期增加至 91
 - CNN-PD-v1.3 在 IC Compiler 中进行多次物理设计后，发现大量时序违例问题，多次优化 tcl 脚本（包括解决 DFF 驱动能力、修复时钟树）均无果。经分析发现 placement 已经出现了明显 slack 问题，SonicBolt PD v1.3 版本打断了 input2reg 路径（source 主要是 img 输入数据），意图修复 placement 的问题。此时迭代周期为 91，并且该版本目前的物理设计违例情况是所有版本中最轻的一个，只有 -0.16ns，可以跑到 98 MHz，结合 91 的迭代周期，可以满足 1000kfps 的性能目标。
