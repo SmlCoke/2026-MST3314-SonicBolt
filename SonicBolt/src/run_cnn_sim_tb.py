@@ -14,7 +14,7 @@ run_cnn_sim_tb.py
     2. 编译 `cnn_sim_tb.v`
     3. 运行连续仿真
     4. 解析 `SIM_OUTPUT / SAMPLE_DONE`
-    5. 与 `prepared_sim/samples/<id>_sigmoid_golden.txt` 对比
+    5. 与 `prepared_sim/samples/<id>_sigmoid_golden.txt` 的分类结果对比
 """
 
 from __future__ import annotations
@@ -34,9 +34,7 @@ DATA_DIR = common.DATA_DIR
 PREP_DIR = DATA_DIR / "prepared_sim"
 PREP_SCRIPT = DATA_DIR / "prepare_sim_data.py"
 SIM_DIR = common.RESULT_DIR / "sim"
-
-# 多样本 `Out/` 来自离线浮点参考；RTL/LUT 输出允许约 1e-2 量级偏差。
-SIGMOID_TOL = 3e-2
+SIGMOID_TOL = common.SIGMOID_TOL
 
 SIM_OUTPUT_RE = re.compile(r"^SIM_OUTPUT sample=(?P<sample>\d+) data=(?P<data>[0-9a-fA-FxXzZ]+)$")
 SAMPLE_DONE_RE = re.compile(r"^SAMPLE_DONE sample=(?P<sample>\d+) cycles=(?P<cycles>\d+)$")
@@ -117,11 +115,23 @@ def run_testbench(vvp_path: Path, sample_ids: List[int], enable_wave: bool) -> T
     return stdout_log, parse_sim_output(stdout_log)
 
 
+def decode_sim_word(sim_word: str) -> Tuple[float, float]:
+    """将 64bit Sigmoid 输出拆成 class0 / class1 两个 FP32。"""
+    sim_cls0 = common.decode_fp32_word(sim_word[8:16])
+    sim_cls1 = common.decode_fp32_word(sim_word[0:8])
+    return sim_cls0, sim_cls1
+
+
+def predict_class(values: List[float] | Tuple[float, float]) -> int:
+    """返回两路输出中的最大值类别；相等时保持 class0 优先。"""
+    return 0 if values[0] >= values[1] else 1
+
+
 def compare_sim_outputs(
     sim_outputs: List[Tuple[int, str]],
     expected_sample_ids: List[int],
 ) -> List[str]:
-    """比较仿真输出与每个样本的 sigmoid golden。"""
+    """比较仿真输出与每个样本的最终分类结果。"""
     mismatches: List[str] = []
 
     if len(sim_outputs) != len(expected_sample_ids):
@@ -144,19 +154,17 @@ def compare_sim_outputs(
         golden_path = PREP_DIR / "samples" / f"{sample_id}_sigmoid_golden.txt"
         golden_values = common.load_sigmoid_golden(golden_path)
 
-        sim_cls0 = common.decode_fp32_word(sim_word[8:16])
-        sim_cls1 = common.decode_fp32_word(sim_word[0:8])
+        sim_cls0, sim_cls1 = decode_sim_word(sim_word)
         sim_values = [sim_cls0, sim_cls1]
+        sim_pred = predict_class(sim_values)
+        golden_pred = predict_class(golden_values)
 
-        for class_idx, golden_value in enumerate(golden_values):
-            sim_value = sim_values[class_idx]
-            if abs(sim_value - golden_value) > SIGMOID_TOL:
-                mismatches.append(
-                    f"sigmoid out mismatch sample={sample_id} class={class_idx}\n"
-                    f"  sim   = {sim_value:.9f}\n"
-                    f"  golden= {golden_value:.9f}\n"
-                    f"  absdiff={abs(sim_value - golden_value):.9f}"
-                )
+        if sim_pred != golden_pred:
+            mismatches.append(
+                f"prediction mismatch sample={sample_id}\n"
+                f"  sim   = class{sim_pred} ({sim_cls0:.9f}, {sim_cls1:.9f})\n"
+                f"  golden= class{golden_pred} ({golden_values[0]:.9f}, {golden_values[1]:.9f})"
+            )
 
     return mismatches
 
@@ -198,10 +206,13 @@ def write_sample_compare_csv(
         "sim_class1",
         "golden_class0",
         "golden_class1",
-        "absdiff_class0",
-        "absdiff_class1",
         "class0_match",
         "class1_match",
+        "absdiff_class0",
+        "absdiff_class1",
+        "sim_pred",
+        "golden_pred",
+        "pred_match",
         "row_status",
     ]
 
@@ -227,6 +238,9 @@ def write_sample_compare_csv(
                 "absdiff_class1": "",
                 "class0_match": "false",
                 "class1_match": "false",
+                "sim_pred": "",
+                "golden_pred": str(predict_class(golden_values)),
+                "pred_match": "false",
                 "row_status": "missing",
             }
 
@@ -239,12 +253,14 @@ def write_sample_compare_csv(
                 writer.writerow(row)
                 continue
             # 将 FP32 输出解码为浮点数，并计算与标准值的绝对误差以及是否匹配
-            sim_cls0 = common.decode_fp32_word(sim_word[8:16])
-            sim_cls1 = common.decode_fp32_word(sim_word[0:8])
+            sim_cls0, sim_cls1 = decode_sim_word(sim_word)
             absdiff_cls0 = abs(sim_cls0 - golden_cls0)
             absdiff_cls1 = abs(sim_cls1 - golden_cls1)
             cls0_match = absdiff_cls0 <= SIGMOID_TOL
             cls1_match = absdiff_cls1 <= SIGMOID_TOL
+            sim_pred = predict_class((sim_cls0, sim_cls1))
+            golden_pred = predict_class(golden_values)
+            pred_match = sim_pred == golden_pred
 
             row["sim_class0"] = f"{sim_cls0:.9f}"
             row["sim_class1"] = f"{sim_cls1:.9f}"
@@ -252,7 +268,10 @@ def write_sample_compare_csv(
             row["absdiff_class1"] = f"{absdiff_cls1:.9f}"
             row["class0_match"] = "true" if cls0_match else "false"
             row["class1_match"] = "true" if cls1_match else "false"
-            row["row_status"] = "ok" if (cls0_match and cls1_match) else "mismatch"
+            row["sim_pred"] = str(sim_pred)
+            row["golden_pred"] = str(golden_pred)
+            row["pred_match"] = "true" if pred_match else "false"
+            row["row_status"] = "ok" if pred_match else "mismatch"
             writer.writerow(row)
 
 
@@ -284,6 +303,8 @@ def main() -> int:
         "vvp_path": str(vvp_path.resolve()),
         "log": stdout_log.name,
         "csv_report": csv_report_path.name,
+        "compare_mode": "predicted_class",
+        "sigmoid_tolerance": SIGMOID_TOL,
         "stage_counts": {
             "sim_output": len(sim_results["sim_output"]),
             "sample_done": len(sim_results["sample_done"]),

@@ -168,7 +168,8 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 PD-v1.0 作为本分支的第一版，基于 main branch 的** SonicBolt v5.5** 实现，除了删除参数 SRAM 暴露的写接口外，其余模块逻辑完全保持不变。
 
 当前**已实现完整功能版本**：
-- SonicBolt Lite v1.0，全链路基础实现，包含所有功能，删除权重/偏置 SRAM，采用 ROM 实现
+- SonicBolt Lite v1.0, 全链路基础实现，包含所有功能，删除权重/偏置 SRAM，采用 ROM 实现
+- SonicBolt Lite v1.1, 打断长组合路径进行了细粒度流水拆分并补齐边界握手
 
 
 ---

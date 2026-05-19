@@ -48,6 +48,7 @@ module cnn_chip #(
     wire [79:0]  net_img_wr_row_data;
     wire         net_img_wr_commit;
     wire         net_img_wr_ready;
+    reg          net_img_wr_ready_r;
 
 
     wire         net_out_stream_valid;
@@ -74,8 +75,18 @@ module cnn_chip #(
 
     PO8W PO8W_busy(.I(net_busy), .PAD(busy));
     PO8W PO8W_done(.I(net_done), .PAD(done));
-    PO8W PO8W_img_wr_ready(.I(net_img_wr_ready), .PAD(img_wr_ready));
     PO8W PO8W_out_stream_valid(.I(net_out_stream_valid), .PAD(out_stream_valid));
+
+    // 在芯片边界打一拍 img_wr_ready，减轻输出端时序压力。
+    always @(posedge net_clk or negedge net_rst_n) begin
+        if (!net_rst_n) begin
+            net_img_wr_ready_r <= 1'b0;
+        end else begin
+            net_img_wr_ready_r <= net_img_wr_ready;
+        end
+    end
+
+    PO8W PO8W_img_wr_ready(.I(net_img_wr_ready_r), .PAD(img_wr_ready));
 
     generate
         for (i = 0; i < 64; i = i + 1) begin : gen_po8w_out_stream_data
