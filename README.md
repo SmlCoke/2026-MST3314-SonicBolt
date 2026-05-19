@@ -89,7 +89,11 @@ CNN-Accelerator/
     │   ├── run_cnn_tb_common.py  # 自动化仿真脚本中的公共函数（如激励生成、结果验证等）
     │   └── README.md             # 详细说明与设计细节
     ├── syn/                      # 综合相关文件（脚本、约束等）
+    │   ├── scripts/              # 综合 tcl 脚本
+    │   └── sdc/                  # 时序约束文件
     └── icc/                      # IC Compiler 物理设计脚本
+        ├── scripts/              # 物理设计 tcl 脚本
+        └── sdc/                  # 物理设计约束文件
 ```
 
 
@@ -174,7 +178,8 @@ PD-v1.0 作为本分支的第一版，基于 main branch 的** SonicBolt v5.5** 
 - CNN-PD-v1.0: SonicBolt PD v1.0，全链路基础实现，包含所有功能，删除了参数 SRAM 写接口，并且通过功能仿真验证，迭代周期仍为 89。
 - CNN-PD-v1.1 解决了两处长关键路径(IC Compiler报告出时序违例): conv_tile_mac_row_mult 以及 fc_mac，此时迭代周期仍为 89
 - CNN-PD-v1.2 继续清除了 DWConv 层以及 PWConv层的长路径，所有路径压缩至 2A/1M，测试迭代周期增加至 91
-- CNN-PD-v1.3 在 IC Compiler 中进行多次物理设计后，发现大量时序违例问题，多次优化 tcl 脚本（包括解决 DFF 驱动能力、修复时钟树）均无果。经分析发现 placement 已经出现了明显 slack 问题，SonicBolt PD v1.3 版本打断了 input2reg 路径（source 主要是 img 输入数据），意图修复 placement 的问题。此时迭代周期为 91，并且该版本目前的物理设计违例情况是所有版本中最轻的一个，只有 -0.16ns，可以跑到 98 MHz，结合 91 的迭代周期，可以满足 1000kfps 的性能目标。
+- CNN-PD-v1.3 在 IC Compiler 中进行多次物理设计后，发现大量时序违例问题，多次优化 tcl 脚本（包括解决 DFF 驱动能力、修复时钟树）均无果。经分析发现 placement 已经出现了明显 slack 问题，SonicBolt PD v1.3 版本打断了 input2reg 路径（source 主要是 img 输入数据），意图修复 placement 的问题。此时迭代周期为 91，并且该版本目前的物理设计违例情况是所有版本中最轻的一个，只有 -0.01ns，可以跑到 98 MHz，结合 91 的迭代周期，可以满足 1000kfps 的性能目标。
+
 ---
 
 ## IV. Quick Start Guide
@@ -227,7 +232,9 @@ python run_cnn_sim_tb.py --start-sample 0 --sample-count 496
 
 ---
 
-## V. 设计进度
+## V. Contributors and Design Progress
+
+### 5.1 Design Progress
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
@@ -235,4 +242,10 @@ python run_cnn_sim_tb.py --start-sample 0 --sample-count 496
 | RTL 设计 | Verilog 模块编写（SonicBolt） | ✅ 完成 |
 | 逻辑仿真 | Testbench 编写与功能验证 | ✅ 完成 |
 | 逻辑综合 | Design Compiler，时序/面积/功耗分析 | ✅ 完成 |
-| 物理设计 | ICC布局布线 | 🔲 进行中 |
+| 物理设计 | ICC布局布线 | ✅ 完成 |
+
+### 5.2 Contributors
+
+<a href="https://github.com/SmlCoke/2026-MST3314-SonicBolt/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=SmlCoke/2026-MST3314-SonicBolt" />
+</a>
