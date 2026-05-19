@@ -141,6 +141,7 @@ module cnn_sim_tb #(
     integer sigmoid_lut_idx;
     integer sample_idx;
     integer current_dataset_sample_id;
+    integer sample_id_mem [0:1023];
 
     // 路径字符串。
     string prep_dir;
@@ -177,38 +178,6 @@ module cnn_sim_tb #(
         .img_wr_row_data(img_wr_row_word),
         .img_wr_commit(img_wr_commit),
         .img_wr_ready(img_wr_ready),
-        .conv_weight_wr_en(conv_weight_wr_en),
-        .conv_weight_wr_bank(conv_weight_wr_bank),
-        .conv_weight_wr_addr(conv_weight_wr_addr),
-        .conv_weight_wr_data(conv_weight_wr_data),
-        .dwconv_weight_wr_en(dwconv_weight_wr_en),
-        .dwconv_weight_wr_bank(dwconv_weight_wr_bank),
-        .dwconv_weight_wr_addr(dwconv_weight_wr_addr),
-        .dwconv_weight_wr_data(dwconv_weight_wr_data),
-        .pwconv_weight_wr_en(pwconv_weight_wr_en),
-        .pwconv_weight_wr_bank(pwconv_weight_wr_bank),
-        .pwconv_weight_wr_addr(pwconv_weight_wr_addr),
-        .pwconv_weight_wr_data(pwconv_weight_wr_data),
-        .conv_bias_wr_en(conv_bias_wr_en),
-        .conv_bias_wr_bank(conv_bias_wr_bank),
-        .conv_bias_wr_addr(conv_bias_wr_addr),
-        .conv_bias_wr_data(conv_bias_wr_data),
-        .dwconv_bias_wr_en(dwconv_bias_wr_en),
-        .dwconv_bias_wr_bank(dwconv_bias_wr_bank),
-        .dwconv_bias_wr_addr(dwconv_bias_wr_addr),
-        .dwconv_bias_wr_data(dwconv_bias_wr_data),
-        .pwconv_bias_wr_en(pwconv_bias_wr_en),
-        .pwconv_bias_wr_bank(pwconv_bias_wr_bank),
-        .pwconv_bias_wr_addr(pwconv_bias_wr_addr),
-        .pwconv_bias_wr_data(pwconv_bias_wr_data),
-        .fc_weight_wr_en(fc_weight_wr_en),
-        .fc_weight_wr_addr(fc_weight_wr_addr),
-        .fc_weight_wr_data(fc_weight_wr_data),
-        .fc_bias_wr_en(fc_bias_wr_en),
-        .fc_bias_wr_data(fc_bias_wr_data),
-        .sigmoid_lut_wr_en(sigmoid_lut_wr_en),
-        .sigmoid_lut_wr_addr(sigmoid_lut_wr_addr),
-        .sigmoid_lut_wr_data(sigmoid_lut_wr_data),
         .out_stream_valid(out_stream_valid),
         .out_stream_data(out_stream_data)
     );
@@ -549,7 +518,7 @@ module cnn_sim_tb #(
         end else if (out_stream_valid) begin
             $display(
                 "SIM_OUTPUT sample=%0d data=%016x",
-                runtime_start_sample + sample_output_counter,
+                sample_id_mem[sample_output_counter],
                 out_stream_data
             );
             sample_output_counter <= sample_output_counter + 1;
@@ -563,7 +532,7 @@ module cnn_sim_tb #(
         end else if (done) begin
             $display(
                 "SAMPLE_DONE sample=%0d cycles=%0d",
-                runtime_start_sample + sample_done_counter,
+                sample_id_mem[sample_done_counter],
                 cycle_counter
             );
             sample_done_counter <= sample_done_counter + 1;
@@ -602,6 +571,7 @@ module cnn_sim_tb #(
 
             wait_img_wr_ready();
             current_dataset_sample_id = runtime_start_sample + sample_idx;
+            sample_id_mem[sample_idx] = current_dataset_sample_id;
             load_input_sample_and_commit(current_dataset_sample_id);
             if (sample_idx == 0) begin
                 start_run();

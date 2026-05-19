@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import struct
 import subprocess
@@ -54,14 +55,21 @@ def run_cmd(
     stdout_handle = stdout_path.open("w", encoding="utf-8") if stdout_path else subprocess.PIPE
     stderr_handle = stderr_path.open("w", encoding="utf-8") if stderr_path else subprocess.PIPE
     try:
+        if os.name == "nt":
+            run_cmd_args = subprocess.list2cmdline(cmd)
+            use_shell = True
+        else:
+            run_cmd_args = cmd
+            use_shell = False
         result = subprocess.run(
-            cmd,
+            run_cmd_args,
             cwd=str(cwd),
             text=True,
             stdout=stdout_handle,
             stderr=stderr_handle,
             close_fds=True,
             check=False,
+            shell=use_shell,
         )
     finally:
         if stdout_path:
@@ -126,18 +134,16 @@ def compile_testbench(tb_top: str, tb_file: Path, result_dir: Path) -> Path:
     compile_err = result_dir / "compile_stderr.log"
     filelist_path = result_dir / "compile_filelist.f"
 
-    source_paths = sorted(path.resolve() for path in CONV_DIR.glob("*.v"))
+    source_paths = [tb_file.resolve(), (SRC_DIR / "cnn.v").resolve()]
+    source_paths += sorted(path.resolve() for path in CONV_DIR.glob("*.v"))
     source_paths += sorted(path.resolve() for path in DWCONV_DIR.glob("*.v"))
     source_paths += sorted(path.resolve() for path in PWCONV_DIR.glob("*.v"))
     source_paths += sorted(path.resolve() for path in POST_PROCESS_DIR.glob("*.v"))
     source_paths += sorted(path.resolve() for path in UTILS_DIR.glob("*.v"))
-    source_paths.append((SRC_DIR / "cnn.v").resolve())
-    source_paths.append(tb_file.resolve())
 
-    # Use filelist mode to avoid long-argument instability on Windows.
-    source_files = [path.as_posix() for path in source_paths]
+    source_files = [path.relative_to(ROOT_DIR).as_posix() for path in source_paths]
     filelist_path.write_text("\n".join(source_files) + "\n", encoding="utf-8")
-    cmd = ["iverilog", "-g2012", "-f", str(filelist_path), "-s", tb_top, "-o", str(vvp_path)]
+    cmd = ["iverilog", "-g2012", "-s", tb_top, "-o", str(vvp_path), *source_files]
     result = run_cmd(cmd, cwd=ROOT_DIR, stdout_path=compile_log, stderr_path=compile_err)
     if result.returncode != 0:
         raise RuntimeError(f"iverilog compile failed, check {compile_log} / {compile_err}")

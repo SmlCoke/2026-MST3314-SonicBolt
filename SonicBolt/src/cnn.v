@@ -107,7 +107,7 @@ module cnn #(
     // - 保护窗 = 6 时，多样本连续仿真会串帧
     // - 保护窗 = 7 时，`run_cnn_test_tb.py` / `run_cnn_sim_tb.py` 均稳定通过
     // 因此这里取当前验证到的最小稳定值 7 ，把启动间隔压到 89 个周期。
-    localparam integer CONV_RELAUNCH_GUARD = 7;
+    localparam integer CONV_RELAUNCH_GUARD = 14;
 
     // 当前版本将“Conv 最后一个输出流出”和“Conv 前端 80 个 token 发完”拆开：
     // - Conv 前端 issue 侧空闲，说明输入缓存 / 参数读口已经可以接下一帧

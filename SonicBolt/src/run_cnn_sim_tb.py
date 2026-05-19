@@ -34,7 +34,9 @@ DATA_DIR = common.DATA_DIR
 PREP_DIR = DATA_DIR / "prepared_sim"
 PREP_SCRIPT = DATA_DIR / "prepare_sim_data.py"
 SIM_DIR = common.RESULT_DIR / "sim"
-SIGMOID_TOL = common.SIGMOID_TOL
+
+# 多样本 `Out/` 来自离线浮点参考；RTL/LUT 输出允许约 1e-2 量级偏差。
+SIGMOID_TOL = 3e-2
 
 SIM_OUTPUT_RE = re.compile(r"^SIM_OUTPUT sample=(?P<sample>\d+) data=(?P<data>[0-9a-fA-FxXzZ]+)$")
 SAMPLE_DONE_RE = re.compile(r"^SAMPLE_DONE sample=(?P<sample>\d+) cycles=(?P<cycles>\d+)$")

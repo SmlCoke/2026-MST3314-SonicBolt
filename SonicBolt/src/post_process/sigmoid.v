@@ -1,4 +1,4 @@
-﻿`timescale 1ns / 1ps
+`timescale 1ns / 1ps
 module post_process_sigmoid (
     input  wire        clk,
     input  wire        rst_n,

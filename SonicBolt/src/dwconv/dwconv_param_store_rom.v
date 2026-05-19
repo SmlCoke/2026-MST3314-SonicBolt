@@ -1,4 +1,4 @@
-﻿`timescale 1ns / 1ps
+`timescale 1ns / 1ps
 module dwconv_param_store_rom (
     input  wire             clk,
     input  wire             rst_n,

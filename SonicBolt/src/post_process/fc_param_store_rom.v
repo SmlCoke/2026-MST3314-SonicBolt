@@ -1,4 +1,4 @@
-﻿`timescale 1ns / 1ps
+`timescale 1ns / 1ps
 module fc_param_store_rom #(
     parameter integer WEIGHT_DEPTH = 72
 ) (
