@@ -14,7 +14,7 @@
 
 ## I. 项目简介
 
-SonicBolt(声速闪电)项目为 SJTU MAST3314《数字集成电路设计课程设计》课程的完整设计仓库，目标是完成一款面向**语音关键词识别**的 CNN 加速器芯片全流程设计，采用工艺：0.18 μm ，预估实现目标：Speed ≥ 1000K frames/s ，评价指标：FoM = Speed / Area。覆盖架构设计、RTL 编码、逻辑仿真、逻辑综合、时序分析与物理设计。
+SonicBolt(声速闪电)项目为 SJTU MAST3314《数字集成电路设计课程设计》课程的完整设计仓库，目标是完成一款面向**语音关键词识别**的 CNN 加速器芯片全流程设计，采用工艺SMIC18 ，预估实现目标：Speed ≥ 1000K frames/s ，评价指标：FoM = Speed / Area。覆盖架构设计、RTL 编码、逻辑仿真、逻辑综合、时序分析与物理设计。
 
 **网络结构（MobileNet v2 简化版）**：
 
@@ -224,13 +224,20 @@ python run_cnn_sim_tb.py --start-sample 0 --sample-count 496
 
 ---
 
-## V. 设计进度
+## V. Contributors and Design Progress
+
+### 5.1 Design Progress
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 架构研究 | 阅读规范、建立 Python 行为模型 | ✅ 完成 |
 | RTL 设计 | Verilog 模块编写（SonicBolt） | ✅ 完成 |
 | 逻辑仿真 | Testbench 编写与功能验证 | ✅ 完成 |
-| 逻辑综合 | Design Compiler，时序/面积/功耗分析 | 🔲 进行中 |
-| 时序分析 | PrimeTime 时序签核 | 🔲 进行中 |
-| 物理设计 | ICC/Encounter 布局布线，后仿真 | 🔲 待开始 |
+| 逻辑综合 | Design Compiler，时序/面积/功耗分析 | ✅ 完成 |
+| 物理设计 | ICC布局布线 | ✅ 完成 |
+
+### 5.2 Contributors
+
+<a href="https://github.com/SmlCoke/2026-MST3314-SonicBolt/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=SmlCoke/2026-MST3314-SonicBolt" />
+</a>
