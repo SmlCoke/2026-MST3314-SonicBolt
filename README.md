@@ -179,7 +179,9 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 - CNN-PD-v1.3 在 IC Compiler 中进行多次物理设计后，发现大量时序违例问题，多次优化 tcl 脚本（包括解决 DFF 驱动能力、修复时钟树）均无果。经分析发现 placement 已经出现了明显 slack 问题，SonicBolt PD v1.3 版本打断了 input2reg 路径（source 主要是 img 输入数据），意图修复 placement 的问题。此时迭代周期为 91，并且该版本目前的物理设计违例情况是所有版本中最轻的一个，只有 -0.16ns，可以跑到 98 MHz，结合 91 的迭代周期，可以满足 1000kfps 的性能目标。
 
 **SonicBolt-Lite 分支情况：**
-- CNN-Lite-v1.0: 替换所有权重/偏置的 SRAM ，采用 ROM （即强制将权重/偏置值赋高低电平实现）
+- CNN-Lite-v1.0: 替换所有权重/偏置的 SRAM ，采用 ROM （即强制将权重/偏置值赋高低电平）实现，仅适合作为一个课程项目使用，迭代周期为 96。
+- CNN-Lite-v1.1: 打断长组合路径进行了细粒度流水拆分并补齐边界握手
+- CNN-Lite-v1.2: 全局总线改为 11 路本地 row ROM 直连
 
 ---
 
@@ -240,5 +242,5 @@ python run_cnn_sim_tb.py --start-sample 0 --sample-count 496
 | 架构研究 | 阅读规范、建立 Python 行为模型 | ✅ 完成 |
 | RTL 设计 | Verilog 模块编写（SonicBolt） | ✅ 完成 |
 | 逻辑仿真 | Testbench 编写与功能验证 | ✅ 完成 |
-| 逻辑综合 | Design Compiler，时序/面积/功耗分析 | ✅ 完成 |
-| 物理设计 | ICC 布局布线 | 🔲 待开始 |
+| 逻辑综合 | ZenSyn，时序/面积/功耗分析 | ✅ 完成 |
+| 物理设计 | ICC 布局布线 | ✅ 完成 |
