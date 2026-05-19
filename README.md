@@ -235,12 +235,20 @@ python run_cnn_sim_tb.py --start-sample 0 --sample-count 496
 
 ---
 
-## V. 设计进度
+## V. Contributors and Design Progress
+
+### 5.1 Design Progress
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 架构研究 | 阅读规范、建立 Python 行为模型 | ✅ 完成 |
 | RTL 设计 | Verilog 模块编写（SonicBolt） | ✅ 完成 |
 | 逻辑仿真 | Testbench 编写与功能验证 | ✅ 完成 |
-| 逻辑综合 | ZenSyn，时序/面积/功耗分析 | ✅ 完成 |
-| 物理设计 | ICC 布局布线 | ✅ 完成 |
+| 逻辑综合 | Design Compiler，时序/面积/功耗分析 | ✅ 完成 |
+| 物理设计 | ICC布局布线 | ✅ 完成 |
+
+### 5.2 Contributors
+
+<a href="https://github.com/SmlCoke/2026-MST3314-SonicBolt/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=SmlCoke/2026-MST3314-SonicBolt" />
+</a>
