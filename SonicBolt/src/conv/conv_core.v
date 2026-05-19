@@ -21,7 +21,7 @@
  *
  * 位宽说明:
  *   - pos_window_data     : 14 x 80bit = 1120bit，对应当前 pos 的 14 行工作集
- *   - weight_data_bus     : 11 x 224bit = 2464bit，对应当前 group 的 11 条 kernel row
+ *   - weight row ROM data  : 11 x 224bit local data in conv_tile_mac
  *   - bias_data_bus       : 4 x 16bit = 64bit
  *   - out_stream_data     : 4 x 4 x 4 x 8bit = 512bit
  *
@@ -62,11 +62,8 @@ module conv_core #(
     // v2.4 版本中，仍保持 14x10 窗口不变，为了不大改 shared_input_buffer 的 RTL Code 
 
     // ---------- 权重/偏置交互接口 ----------
-    output wire          weight_rd_en,             // Conv 权重 SRAM 读使能
-    output wire [2:0]    weight_rd_group,          // 读取哪个 group 的权重
     output wire          bias_rd_en,               // Conv 偏置 SRAM 读使能
     output wire [2:0]    bias_rd_group,            // 读取哪个 group 的偏置
-    input  wire [11*224-1:0] weight_data_bus,      // 权重 SRAM 读出数据总线
     input  wire [63:0]   bias_data_bus,            // 偏置 SRAM 读出数据总线
 
     // ---------- 输出数据流接口 ----------
@@ -107,6 +104,8 @@ module conv_core #(
     wire [6:0] next_issue_count;
     wire       req_init_pos;
     wire       req_next_pos;
+    wire       weight_rd_en;
+    wire [2:0] weight_rd_group;
 
     // MAC 运算单元输出元数据与数据
     wire                tile_valid;
@@ -339,7 +338,8 @@ module conv_core #(
         .pos_window_data(pos_window_data), // in: 输入数据: 当前 pos 的 14 行工作集
 
         // ---------- 权重和偏置 ----------
-        .weight_data_bus(weight_data_bus), // in: 权重数据总线: 当前 group 的 11 条 kernel row
+        .weight_rd_en(weight_rd_en),       // in: 权重读使能
+        .weight_rd_group(weight_rd_group), // in: 权重 group
         .bias_data_bus(bias_data_bus),     // in: 偏置数据总线: 当前 group 的 4 条 bias
 
         // ---------- 输出半窗数据和元数据 ----------

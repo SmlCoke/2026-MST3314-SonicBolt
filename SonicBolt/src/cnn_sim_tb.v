@@ -3,11 +3,11 @@
  * 模块名称: cnn_sim_tb
  * 作者: SonicBolt Team
  * 日期: 2026-04-08
- * 版本: v1.1
+ * 版本: v1.0
  *
  * 总结:
  *   简化的多样本连续仿真测试平台。
- *   该测试平台只保留当前顶层需要的输入提交流程，
+ *   该测试平台保持与 cnn_test_tb 相近的输入提交流程，
  *   但只打印两种类型的日志:
  *     - SIM_OUTPUT sample=<dataset_id> data=<16hex>
  *     - SAMPLE_DONE sample=<dataset_id> cycles=<cycle>
@@ -16,7 +16,7 @@
  *   1. START_SAMPLE / SAMPLE_COUNT 通过 plusargs 传递。
  *   2. 按样本加载输入行文件:
  *      <PREP_DIR>/samples/<id>_input_rows.mem
- *   3. 权重 / 偏置 / Sigmoid LUT 已由 RTL 内部 ROM 固化。
+ *   3. 当前 RTL 参数和 Sigmoid LUT 已固化，不再通过 testbench 写入。
  */
 
 module cnn_sim_tb #(
@@ -116,7 +116,7 @@ module cnn_sim_tb #(
         end
     endtask
 
-    // 解析 plusargs 并构建输入文件路径前缀。
+    // 解析 plusargs。
     task automatic parse_plusargs;
         begin
             prep_dir = "";

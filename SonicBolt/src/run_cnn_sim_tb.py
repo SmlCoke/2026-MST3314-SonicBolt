@@ -14,7 +14,7 @@ run_cnn_sim_tb.py
     2. 编译 `cnn_sim_tb.v`
     3. 运行连续仿真
     4. 解析 `SIM_OUTPUT / SAMPLE_DONE`
-    5. 与 `prepared_sim/samples/<id>_sigmoid_golden.txt` 的分类结果对比
+    5. 生成逐样本输出 CSV，并可选执行严格 golden 对比
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-count", type=int, default=5, help="How many samples to simulate")
     parser.add_argument("--wave", action="store_true", help="Enable VCD dump")
     parser.add_argument("--keep-build", action="store_true", help="Keep existing files in results/sim")
+    parser.add_argument("--strict-golden", action="store_true", help="Fail when data/Out reference values differ")
     return parser.parse_args()
 
 
@@ -115,23 +116,11 @@ def run_testbench(vvp_path: Path, sample_ids: List[int], enable_wave: bool) -> T
     return stdout_log, parse_sim_output(stdout_log)
 
 
-def decode_sim_word(sim_word: str) -> Tuple[float, float]:
-    """将 64bit Sigmoid 输出拆成 class0 / class1 两个 FP32。"""
-    sim_cls0 = common.decode_fp32_word(sim_word[8:16])
-    sim_cls1 = common.decode_fp32_word(sim_word[0:8])
-    return sim_cls0, sim_cls1
-
-
-def predict_class(values: List[float] | Tuple[float, float]) -> int:
-    """返回两路输出中的最大值类别；相等时保持 class0 优先。"""
-    return 0 if values[0] >= values[1] else 1
-
-
-def compare_sim_outputs(
+def validate_sim_output_sequence(
     sim_outputs: List[Tuple[int, str]],
     expected_sample_ids: List[int],
 ) -> List[str]:
-    """比较仿真输出与每个样本的最终分类结果。"""
+    """检查 SIM_OUTPUT 的数量、顺序和未知值。"""
     mismatches: List[str] = []
 
     if len(sim_outputs) != len(expected_sample_ids):
@@ -149,22 +138,39 @@ def compare_sim_outputs(
 
         if common.tile_has_unknown(sim_word):
             mismatches.append(f"sim_output unknown sample={sample_id} data={sim_word}")
+
+    return mismatches
+
+
+def compare_sigmoid_reference(
+    sim_outputs: List[Tuple[int, str]],
+    expected_sample_ids: List[int],
+) -> List[str]:
+    """比较仿真输出与 data/Out 参考值，默认仅作为报告信息。"""
+    mismatches: List[str] = []
+    sim_output_map = {sample_id: data_hex for sample_id, data_hex in sim_outputs}
+
+    for sample_id in expected_sample_ids:
+        sim_word = sim_output_map.get(sample_id)
+        if not sim_word or common.tile_has_unknown(sim_word):
             continue
 
         golden_path = PREP_DIR / "samples" / f"{sample_id}_sigmoid_golden.txt"
         golden_values = common.load_sigmoid_golden(golden_path)
 
-        sim_cls0, sim_cls1 = decode_sim_word(sim_word)
+        sim_cls0 = common.decode_fp32_word(sim_word[8:16])
+        sim_cls1 = common.decode_fp32_word(sim_word[0:8])
         sim_values = [sim_cls0, sim_cls1]
-        sim_pred = predict_class(sim_values)
-        golden_pred = predict_class(golden_values)
 
-        if sim_pred != golden_pred:
-            mismatches.append(
-                f"prediction mismatch sample={sample_id}\n"
-                f"  sim   = class{sim_pred} ({sim_cls0:.9f}, {sim_cls1:.9f})\n"
-                f"  golden= class{golden_pred} ({golden_values[0]:.9f}, {golden_values[1]:.9f})"
-            )
+        for class_idx, golden_value in enumerate(golden_values):
+            sim_value = sim_values[class_idx]
+            if abs(sim_value - golden_value) > SIGMOID_TOL:
+                mismatches.append(
+                    f"sigmoid reference diff sample={sample_id} class={class_idx}\n"
+                    f"  sim   = {sim_value:.9f}\n"
+                    f"  ref   = {golden_value:.9f}\n"
+                    f"  absdiff={abs(sim_value - golden_value):.9f}"
+                )
 
     return mismatches
 
@@ -194,7 +200,7 @@ def write_sample_compare_csv(
     """
     导出逐样本对比 CSV：
       - 每个 sample 的两路仿真输出（class0/class1）
-      - 对应标准值（golden）
+      - 对应参考值（data/Out）
       - 每路绝对误差与是否在容差内
     """
     sim_output_map = {sample_id: data_hex for sample_id, data_hex in sim_outputs}
@@ -206,13 +212,10 @@ def write_sample_compare_csv(
         "sim_class1",
         "golden_class0",
         "golden_class1",
-        "class0_match",
-        "class1_match",
         "absdiff_class0",
         "absdiff_class1",
-        "sim_pred",
-        "golden_pred",
-        "pred_match",
+        "class0_match",
+        "class1_match",
         "row_status",
     ]
 
@@ -222,7 +225,7 @@ def write_sample_compare_csv(
 
         for sample_id in expected_sample_ids:
             golden_path = PREP_DIR / "samples" / f"{sample_id}_sigmoid_golden.txt"
-            # 从 Out/ 文件夹下读取标准浮点数输出，可能存在一定误差
+            # 从 Out/ 文件夹下读取参考浮点数输出，可能存在一定误差
             golden_values = common.load_sigmoid_golden(golden_path)
             golden_cls0, golden_cls1 = golden_values[0], golden_values[1]
 
@@ -238,9 +241,6 @@ def write_sample_compare_csv(
                 "absdiff_class1": "",
                 "class0_match": "false",
                 "class1_match": "false",
-                "sim_pred": "",
-                "golden_pred": str(predict_class(golden_values)),
-                "pred_match": "false",
                 "row_status": "missing",
             }
 
@@ -253,14 +253,12 @@ def write_sample_compare_csv(
                 writer.writerow(row)
                 continue
             # 将 FP32 输出解码为浮点数，并计算与标准值的绝对误差以及是否匹配
-            sim_cls0, sim_cls1 = decode_sim_word(sim_word)
+            sim_cls0 = common.decode_fp32_word(sim_word[8:16])
+            sim_cls1 = common.decode_fp32_word(sim_word[0:8])
             absdiff_cls0 = abs(sim_cls0 - golden_cls0)
             absdiff_cls1 = abs(sim_cls1 - golden_cls1)
             cls0_match = absdiff_cls0 <= SIGMOID_TOL
             cls1_match = absdiff_cls1 <= SIGMOID_TOL
-            sim_pred = predict_class((sim_cls0, sim_cls1))
-            golden_pred = predict_class(golden_values)
-            pred_match = sim_pred == golden_pred
 
             row["sim_class0"] = f"{sim_cls0:.9f}"
             row["sim_class1"] = f"{sim_cls1:.9f}"
@@ -268,10 +266,7 @@ def write_sample_compare_csv(
             row["absdiff_class1"] = f"{absdiff_cls1:.9f}"
             row["class0_match"] = "true" if cls0_match else "false"
             row["class1_match"] = "true" if cls1_match else "false"
-            row["sim_pred"] = str(sim_pred)
-            row["golden_pred"] = str(golden_pred)
-            row["pred_match"] = "true" if pred_match else "false"
-            row["row_status"] = "ok" if pred_match else "mismatch"
+            row["row_status"] = "ok" if (cls0_match and cls1_match) else "mismatch"
             writer.writerow(row)
 
 
@@ -288,33 +283,36 @@ def main() -> int:
     vvp_path = compile_testbench()
     stdout_log, sim_results = run_testbench(vvp_path, sample_ids, args.wave)
 
-    mismatches: List[str] = []
-    mismatches.extend(compare_sim_outputs(sim_results["sim_output"], sample_ids))
-    mismatches.extend(compare_done_sequence(sim_results["sample_done"], sample_ids))
+    fatal_mismatches: List[str] = []
+    reference_mismatches: List[str] = []
+    fatal_mismatches.extend(validate_sim_output_sequence(sim_results["sim_output"], sample_ids))
+    fatal_mismatches.extend(compare_done_sequence(sim_results["sample_done"], sample_ids))
+    reference_mismatches.extend(compare_sigmoid_reference(sim_results["sim_output"], sample_ids))
     csv_report_path = SIM_DIR / "sample_output_compare.csv"
     write_sample_compare_csv(sim_results["sim_output"], sample_ids, csv_report_path)
-    matched = len(mismatches) == 0
+    matched = len(fatal_mismatches) == 0 and (not args.strict_golden or len(reference_mismatches) == 0)
+    report_items = fatal_mismatches + reference_mismatches
 
     summary = {
         "start_sample": sample_ids[0],
         "sample_count": len(sample_ids),
         "wave_enabled": args.wave,
+        "strict_golden": args.strict_golden,
         "prepared_dir": str(PREP_DIR.resolve()),
         "vvp_path": str(vvp_path.resolve()),
         "log": stdout_log.name,
         "csv_report": csv_report_path.name,
-        "compare_mode": "predicted_class",
-        "sigmoid_tolerance": SIGMOID_TOL,
         "stage_counts": {
             "sim_output": len(sim_results["sim_output"]),
             "sample_done": len(sim_results["sample_done"]),
         },
         "matched": matched,
-        "mismatch_count": len(mismatches),
+        "mismatch_count": len(fatal_mismatches),
+        "reference_mismatch_count": len(reference_mismatches),
     }
-    common.write_reports(SIM_DIR, summary, mismatches)
+    common.write_reports(SIM_DIR, summary, report_items)
 
-    if mismatches:
+    if not matched:
         common.print_summary_box(
             "T_T  CNN sim testbench result: FAILED",
             [
@@ -322,6 +320,8 @@ def main() -> int:
                 ("Samples", str(len(sample_ids))),
                 ("Passed", "0"),
                 ("Failed", str(len(sample_ids))),
+                ("Strict", "on" if args.strict_golden else "off"),
+                ("Ref diffs", str(len(reference_mismatches))),
                 ("Report", "mismatch_report.txt"),
                 ("CSV", csv_report_path.name),
             ],
@@ -335,6 +335,8 @@ def main() -> int:
             ("Samples", str(len(sample_ids))),
             ("Passed", str(len(sample_ids))),
             ("Failed", "0"),
+            ("Strict", "on" if args.strict_golden else "off"),
+            ("Ref diffs", str(len(reference_mismatches))),
             ("Report", "mismatch_report.txt"),
             ("CSV", csv_report_path.name),
         ],

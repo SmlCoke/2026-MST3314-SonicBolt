@@ -9,7 +9,8 @@ module conv_tile_mac (
     input  wire [2:0]          in_group,
     input  wire                in_fire,
     input  wire [14*10*8-1:0]  pos_window_data,
-    input  wire [11*4*7*8-1:0] weight_data_bus,
+    input  wire                weight_rd_en,
+    input  wire [2:0]          weight_rd_group,
     input  wire [4*16-1:0]     bias_data_bus,
     output wire                out_valid,
     output wire                out_last,
@@ -37,6 +38,17 @@ module conv_tile_mac (
     wire [4*2*4*19-1:0] row_sum_bus_8;
     wire [4*2*4*19-1:0] row_sum_bus_9;
     wire [4*2*4*19-1:0] row_sum_bus_10;
+    wire [223:0] weight_row_data_0;
+    wire [223:0] weight_row_data_1;
+    wire [223:0] weight_row_data_2;
+    wire [223:0] weight_row_data_3;
+    wire [223:0] weight_row_data_4;
+    wire [223:0] weight_row_data_5;
+    wire [223:0] weight_row_data_6;
+    wire [223:0] weight_row_data_7;
+    wire [223:0] weight_row_data_8;
+    wire [223:0] weight_row_data_9;
+    wire [223:0] weight_row_data_10;
     wire [11*4*2*4*19-1:0] stage4_row_sum_bus;
 
     wire [63:0] stage2_bias_bus;
@@ -100,81 +112,159 @@ module conv_tile_mac (
         .out_fire(stage1_fire)
     );
 
+    conv_weight_row_rom #(.ROW_INDEX(0)) u_weight_row_rom_0 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .rd_en(weight_rd_en),
+        .rd_group(weight_rd_group),
+        .weight_row_data(weight_row_data_0)
+    );
+    conv_weight_row_rom #(.ROW_INDEX(1)) u_weight_row_rom_1 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .rd_en(weight_rd_en),
+        .rd_group(weight_rd_group),
+        .weight_row_data(weight_row_data_1)
+    );
+    conv_weight_row_rom #(.ROW_INDEX(2)) u_weight_row_rom_2 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .rd_en(weight_rd_en),
+        .rd_group(weight_rd_group),
+        .weight_row_data(weight_row_data_2)
+    );
+    conv_weight_row_rom #(.ROW_INDEX(3)) u_weight_row_rom_3 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .rd_en(weight_rd_en),
+        .rd_group(weight_rd_group),
+        .weight_row_data(weight_row_data_3)
+    );
+    conv_weight_row_rom #(.ROW_INDEX(4)) u_weight_row_rom_4 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .rd_en(weight_rd_en),
+        .rd_group(weight_rd_group),
+        .weight_row_data(weight_row_data_4)
+    );
+    conv_weight_row_rom #(.ROW_INDEX(5)) u_weight_row_rom_5 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .rd_en(weight_rd_en),
+        .rd_group(weight_rd_group),
+        .weight_row_data(weight_row_data_5)
+    );
+    conv_weight_row_rom #(.ROW_INDEX(6)) u_weight_row_rom_6 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .rd_en(weight_rd_en),
+        .rd_group(weight_rd_group),
+        .weight_row_data(weight_row_data_6)
+    );
+    conv_weight_row_rom #(.ROW_INDEX(7)) u_weight_row_rom_7 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .rd_en(weight_rd_en),
+        .rd_group(weight_rd_group),
+        .weight_row_data(weight_row_data_7)
+    );
+    conv_weight_row_rom #(.ROW_INDEX(8)) u_weight_row_rom_8 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .rd_en(weight_rd_en),
+        .rd_group(weight_rd_group),
+        .weight_row_data(weight_row_data_8)
+    );
+    conv_weight_row_rom #(.ROW_INDEX(9)) u_weight_row_rom_9 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .rd_en(weight_rd_en),
+        .rd_group(weight_rd_group),
+        .weight_row_data(weight_row_data_9)
+    );
+    conv_weight_row_rom #(.ROW_INDEX(10)) u_weight_row_rom_10 (
+        .clk(clk),
+        .rst_n(rst_n),
+        .rd_en(weight_rd_en),
+        .rd_group(weight_rd_group),
+        .weight_row_data(weight_row_data_10)
+    );
+
     conv_tile_mac_row_mult u_row_mult_0 (
         .clk(clk),
         .rst_n(rst_n),
         .row_window_data(pos_window_data[2*80-1:0]),
-        .weight_row_data(weight_data_bus[224-1:0]),
+        .weight_row_data(weight_row_data_0),
         .out_row_sum_bus(row_sum_bus_0)
     );
     conv_tile_mac_row_mult u_row_mult_1 (
         .clk(clk),
         .rst_n(rst_n),
         .row_window_data(pos_window_data[3*80-1:1*80]),
-        .weight_row_data(weight_data_bus[2*224-1:1*224]),
+        .weight_row_data(weight_row_data_1),
         .out_row_sum_bus(row_sum_bus_1)
     );
     conv_tile_mac_row_mult u_row_mult_2 (
         .clk(clk),
         .rst_n(rst_n),
         .row_window_data(pos_window_data[4*80-1:2*80]),
-        .weight_row_data(weight_data_bus[3*224-1:2*224]),
+        .weight_row_data(weight_row_data_2),
         .out_row_sum_bus(row_sum_bus_2)
     );
     conv_tile_mac_row_mult u_row_mult_3 (
         .clk(clk),
         .rst_n(rst_n),
         .row_window_data(pos_window_data[5*80-1:3*80]),
-        .weight_row_data(weight_data_bus[4*224-1:3*224]),
+        .weight_row_data(weight_row_data_3),
         .out_row_sum_bus(row_sum_bus_3)
     );
     conv_tile_mac_row_mult u_row_mult_4 (
         .clk(clk),
         .rst_n(rst_n),
         .row_window_data(pos_window_data[6*80-1:4*80]),
-        .weight_row_data(weight_data_bus[5*224-1:4*224]),
+        .weight_row_data(weight_row_data_4),
         .out_row_sum_bus(row_sum_bus_4)
     );
     conv_tile_mac_row_mult u_row_mult_5 (
         .clk(clk),
         .rst_n(rst_n),
         .row_window_data(pos_window_data[7*80-1:5*80]),
-        .weight_row_data(weight_data_bus[6*224-1:5*224]),
+        .weight_row_data(weight_row_data_5),
         .out_row_sum_bus(row_sum_bus_5)
     );
     conv_tile_mac_row_mult u_row_mult_6 (
         .clk(clk),
         .rst_n(rst_n),
         .row_window_data(pos_window_data[8*80-1:6*80]),
-        .weight_row_data(weight_data_bus[7*224-1:6*224]),
+        .weight_row_data(weight_row_data_6),
         .out_row_sum_bus(row_sum_bus_6)
     );
     conv_tile_mac_row_mult u_row_mult_7 (
         .clk(clk),
         .rst_n(rst_n),
         .row_window_data(pos_window_data[9*80-1:7*80]),
-        .weight_row_data(weight_data_bus[8*224-1:7*224]),
+        .weight_row_data(weight_row_data_7),
         .out_row_sum_bus(row_sum_bus_7)
     );
     conv_tile_mac_row_mult u_row_mult_8 (
         .clk(clk),
         .rst_n(rst_n),
         .row_window_data(pos_window_data[10*80-1:8*80]),
-        .weight_row_data(weight_data_bus[9*224-1:8*224]),
+        .weight_row_data(weight_row_data_8),
         .out_row_sum_bus(row_sum_bus_8)
     );
     conv_tile_mac_row_mult u_row_mult_9 (
         .clk(clk),
         .rst_n(rst_n),
         .row_window_data(pos_window_data[11*80-1:9*80]),
-        .weight_row_data(weight_data_bus[10*224-1:9*224]),
+        .weight_row_data(weight_row_data_9),
         .out_row_sum_bus(row_sum_bus_9)
     );
     conv_tile_mac_row_mult u_row_mult_10 (
         .clk(clk),
         .rst_n(rst_n),
         .row_window_data(pos_window_data[12*80-1:10*80]),
-        .weight_row_data(weight_data_bus[11*224-1:10*224]),
+        .weight_row_data(weight_row_data_10),
         .out_row_sum_bus(row_sum_bus_10)
     );
 

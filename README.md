@@ -170,6 +170,7 @@ PD-v1.0 作为本分支的第一版，基于 main branch 的** SonicBolt v5.5** 
 当前**已实现完整功能版本**：
 - SonicBolt Lite v1.0, 全链路基础实现，包含所有功能，删除权重/偏置 SRAM，采用 ROM 实现
 - SonicBolt Lite v1.1, 打断长组合路径进行了细粒度流水拆分并补齐边界握手
+- SonicBolt Lite v1.2, 全局总线改为 11 路本地 row ROM 直连，减少超宽总线和超大扇出
 
 
 ---

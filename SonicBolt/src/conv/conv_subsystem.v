@@ -49,11 +49,8 @@ module conv_subsystem #(
     wire             consume_tick;
     wire [14*80-1:0] pos_window_data;
 
-    wire              weight_rd_en;
-    wire [2:0]        weight_rd_group;
     wire              bias_rd_en;
     wire [2:0]        bias_rd_group;
-    wire [11*224-1:0] weight_data_bus;
     wire [63:0]       bias_data_bus;
 
     wire          tile_valid_int;
@@ -119,11 +116,8 @@ module conv_subsystem #(
     conv_param_store_rom u_conv_param_store (
         .clk(clk),
         .rst_n(rst_n),
-        .weight_rd_en(weight_rd_en),
-        .weight_rd_group(weight_rd_group),
         .bias_rd_en(bias_rd_en),
         .bias_rd_group(bias_rd_group),
-        .weight_data_bus(weight_data_bus),
         .bias_data_bus(bias_data_bus)
     );
 
@@ -143,12 +137,8 @@ module conv_subsystem #(
         .consume_tick(consume_tick),
         .pos_window_valid(pos_window_valid),
         .pos_window_data(pos_window_data),
-
-        .weight_rd_en(weight_rd_en),
-        .weight_rd_group(weight_rd_group),
         .bias_rd_en(bias_rd_en),
         .bias_rd_group(bias_rd_group),
-        .weight_data_bus(weight_data_bus),
         .bias_data_bus(bias_data_bus),
 
         .out_stream_valid(tile_valid_int),
