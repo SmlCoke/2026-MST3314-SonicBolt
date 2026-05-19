@@ -28,7 +28,7 @@ Input(1,30,10) → Conv(32,1,11,7) → ReLU
                → Sigmoid → 二分类输出
 ```
 
-所有卷积层采用 INT8 量化，中间累加使用 INT32，通过定点化乘移位（`M0 × 2^{-n}`）重量化回 INT8。
+所有卷积层采用 INT8 量化，中间累加使用 INT32，通过定点化乘移位（ $M0 × 2^{-n}$ ）重量化回 INT8。
 
 ---
 
@@ -164,13 +164,12 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
 4. PWConv 子系统的设计说明文档：[SonicBolt/src/pwconv/docs/README.md](SonicBolt/src/pwconv/docs/README.md)
 5. Post Process 子系统的设计说明文档：[SonicBolt/src/post_process/docs/README.md](SonicBolt/src/post_process/docs/README.md)
 
+注意，本分支为 **SonicBolt Lite** , 采用 ROM (强制用高低电平硬编码表示参数) 替代了基础系列和 PD 系列中的参数 SRAM 模块，意图获取更好的物理设计表现。该版本仅可作为课程项目实现，不适合真实工业界的芯片设计。
+PD-v1.0 作为本分支的第一版，基于 main branch 的** SonicBolt v5.5** 实现，除了删除参数 SRAM 暴露的写接口外，其余模块逻辑完全保持不变。
 
 当前**已实现完整功能版本**：
-- CNN-v1.0: SonicBolt v5.1，全链路基础实现，包含所有功能，并且通过功能仿真验证
-- CNN-v1.1: SonicBolt v5.2，新增**输入 Ping-Pong 缓存机制**，实现流水线连续计算
-- CNN-v1.2: SonicBolt v5.3，将杂糅的状态转移逻辑重构为有限状态机写法，提升代码可读性和可维护性。
-- CNN-v1.3: SonicBolt v5.4，新增**半窗缓存机制**，将 Conv 层的计算降低一半，代价是迭代周期从 72 增加至 80 。
-- CNN-v1.4: SonicBolt v5.5，实现更激进的下一帧启动机制，在**控制逻辑复杂化程度较低**的情况下，将 Conv 层的迭代周期**从 103 进一步压缩至 89** ，成功实现了 $1000k fps$ 的性能指标。
+- SonicBolt Lite v1.0，全链路基础实现，包含所有功能，删除权重/偏置 SRAM，采用 ROM 实现
+
 
 ---
 
