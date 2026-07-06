@@ -250,5 +250,5 @@ python run_cnn_sim_tb.py --start-sample 0 --sample-count 496
 ### 5.2 Contributors
 
 <a href="https://github.com/SmlCoke/2026-MST3314-SonicBolt/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=SmlCoke/2026-MST3314-SonicBolt" />
+  <img src="https://contrib.rocks/image?repo=SmlCoke/2026-MST3314-SonicBolt&anon=1" />
 </a>
