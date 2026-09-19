@@ -195,7 +195,7 @@ Python 3.8+, 推荐使用 conda 管理环境：
 三个工具的下载链接：[https://bleyer.org/icarus/](https://bleyer.org/icarus/)
 注意下载时勾选 `GTKWave` 组件。
 安装完成后，将`bin\`目录添加进入环境变量，确保 `iverilog`, `vvp`, `gtkwave` 等命令可以在终端中直接使用。
-更详细的安装教程可以参考：[SmlCoke: Verilog + VS Code 工具链配置](https://smlcoke.com/me/EDA/vscode/vscode/) 或者 [SmlCoke: OSS CAD Suite](https://smlcoke.com/me/EDA/OSS/oss/) 
+更详细的安装教程可以参考：[SmlCoke: Verilog + VS Code 工具链配置](https://smlcoke.com/microelectronics/eda/vscode/) 或者 [SmlCoke: OSS CAD Suite](https://smlcoke.com/microelectronics/eda/oss-cad-suite/) 
 
 **Linux (Ubuntu/Debian) 环境下的安装方法：**
 
