@@ -132,7 +132,7 @@ python run_inference.py  # 单样本推理，打印每层 I/O 尺寸
   ```bash
   python search_files_by_name.py <root_directory> <filename_keyword>
   ```
-- `interception.py`：git commit 时的审查与拦截脚本，可以用于检查提交信息规范、代码格式等。目前会审查 Conv/DWConv 子系统的版本号是否与说明文档 README.md 匹配，以及暂存区中的 `.v` 模块更新时间是否等于当前时间。具体使用方法参见：[SmlCoke: Git & Github 使用指南](https://smlcoke.com/Tools/git/git/) 中 `hook` 机制这一节。
+- `interception.py`：git commit 时的审查与拦截脚本，可以用于检查提交信息规范、代码格式等。目前会审查 Conv/DWConv 子系统的版本号是否与说明文档 README.md 匹配，以及暂存区中的 `.v` 模块更新时间是否等于当前时间。具体使用方法参见：[SmlCoke: Git & Github 使用指南](https://smlcoke.com/tools/git/) 中 `hook` 机制这一节。
 ---
 
 ### 3.4 `Demo/` — AI 生成的示例实现
